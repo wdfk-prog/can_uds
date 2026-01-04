@@ -593,11 +593,19 @@ rtt_uds_env_t *rtt_uds_create(const rtt_uds_config_t *cfg)
     }
 
     /* 5. Initialize ISO-TP Layer */
+    rt_uint32_t func_resp_id = cfg->func_resp_id;
+    if (func_resp_id > 0x7FF)
+    {
+        rt_uint32_t old = func_resp_id;
+        func_resp_id &= 0x7FF;
+        LOG_W("func_resp_id=0x%08x invalid for STD CAN, masked to 0x%03x", old, func_resp_id);
+    }
+
     UDSISOTpCConfig_t tp_cfg = {
         .source_addr = cfg->phys_id,
         .target_addr = cfg->resp_id,
         .source_addr_func = cfg->func_id,
-        .target_addr_func = cfg->func_resp_id
+        .target_addr_func = func_resp_id
     };
     UDSISOTpCInit(&env->tp, &tp_cfg);
 
