@@ -251,6 +251,40 @@ if PKG_USING_ISO14229
 
     if UDS_USING_EXAMPLE
         menu "Example Configuration"
+            choice UDS_EXAMPLE_START_MODE
+                prompt "UDS example startup mode"
+                default UDS_EXAMPLE_START_MODE_CONSOLE
+                help
+                    Choose how the UDS example is started: either manually via an MSH
+                    command, automatically during application initialization, or
+                    left for manual invocation from user code.
+
+                config UDS_EXAMPLE_START_MODE_CONSOLE
+                    bool "Start via console command"
+                    help
+                        Keep the original 'uds_example start|stop <dev>' MSH command workflow.
+
+                config UDS_EXAMPLE_START_MODE_APP_INIT
+                    bool "Auto start in app_init"
+                    help
+                        Start the example automatically during the application init phase,
+                        without requiring a console command.
+
+                config UDS_EXAMPLE_START_MODE_USER_CALL
+                    bool "No auto/console start (user calls start function manually)"
+                    help
+                        Do not register an MSH command or auto-start. User code is expected to
+                        call uds_example_start/stop directly.
+            endchoice
+
+            config UDS_EXAMPLE_AUTO_CAN_DEV
+                string "CAN device name for auto start"
+                default "can1"
+                depends on UDS_EXAMPLE_START_MODE_APP_INIT
+                help
+                    The CAN device name used when auto-starting from app_init.
+                    Ignored when console command mode is selected.
+
             config UDS_EXAMPLE_LED_CTRL_DID
                 hex "DID for LED control (0x2F)"
                 default 0x0100

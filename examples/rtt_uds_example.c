@@ -14,6 +14,7 @@
  * @par Change Log:
  * Date       Version Author      Description
  * 2025-11-19 1.0     wdfk-prog   first version
+ * 2026-01-04 1.1     wdfk-prog   Add auto/console/user-call startup modes
  */
 #include "rtt_uds_service.h"
 
@@ -28,15 +29,15 @@
 
 /* CAN ID Configuration */
 #ifndef UDS_ISO_CAN_ID_PHYS
-#define UDS_ISO_CAN_ID_PHYS   0x7E0  /**< Physical Request ID (Client -> Server) */
+#define UDS_ISO_CAN_ID_PHYS 0x7E0  /**< Physical Request ID (Client -> Server) */
 #endif
 
 #ifndef UDS_ISO_CAN_ID_FUNC
-#define UDS_ISO_CAN_ID_FUNC   0x7DF  /**< Functional Request ID (Broadcast) */
+#define UDS_ISO_CAN_ID_FUNC 0x7DF  /**< Functional Request ID (Broadcast) */
 #endif
 
 #ifndef UDS_ISO_CAN_ID_RESP
-#define UDS_ISO_CAN_ID_RESP   0x7E8  /**< Response ID (Server -> Client) */
+#define UDS_ISO_CAN_ID_RESP 0x7E8  /**< Response ID (Server -> Client) */
 #endif
 
 /* Thread Configuration */
@@ -45,11 +46,11 @@
 #endif
 
 #ifndef UDS_THREAD_PRIORITY
-#define UDS_THREAD_PRIORITY   2      /**< Priority for UDS server thread */
+#define UDS_THREAD_PRIORITY 2      /**< Priority for UDS server thread */
 #endif
 
 #ifndef UDS_MSG_QUEUE_SIZE
-#define UDS_MSG_QUEUE_SIZE    32     /**< Size of RX message queue */
+#define UDS_MSG_QUEUE_SIZE 32     /**< Size of RX message queue */
 #endif
 
 /* ==========================================================================
@@ -67,6 +68,22 @@
 #define UDS_EXAMPLE_PIN_LED_B -1
 #endif
 
+#ifdef UDS_EXAMPLE_START_MODE_APP_INIT
+#define UDS_EXAMPLE_AUTO_START 1
+#else
+#define UDS_EXAMPLE_AUTO_START 0
+#endif
+
+#ifdef UDS_EXAMPLE_START_MODE_CONSOLE
+#define UDS_EXAMPLE_ENABLE_MSH 1
+#else
+#define UDS_EXAMPLE_ENABLE_MSH 0
+#endif
+
+#ifndef UDS_EXAMPLE_AUTO_CAN_DEV
+#define UDS_EXAMPLE_AUTO_CAN_DEV "can1"
+#endif
+
 #ifndef UDS_EXAMPLE_LED_CTRL_DID
 #define UDS_EXAMPLE_LED_CTRL_DID 0x0100
 #endif
@@ -77,7 +94,7 @@
 #endif
 
 #ifndef UDS_SEC_DEFAULT_KEY
-#define UDS_SEC_DEFAULT_KEY   0xA5A5A5A5
+#define UDS_SEC_DEFAULT_KEY 0xA5A5A5A5
 #endif
 RTT_UDS_SEC_SERVICE_DEFINE(security_service, UDS_SEC_DEFAULT_LEVEL, UDS_SEC_DEFAULT_KEY);
 #endif
@@ -127,8 +144,10 @@ static rgb_color_t act_rgb = { 0, 0, 0 }; /**< Actual value currently on Hardwar
 /** @brief Global UDS environment handle */
 static rtt_uds_env_t *uds_env = RT_NULL;
 
-/** @brief Storage for the original CAN receive callback to restore on stop */
-static rt_err_t (*old_can_rx_indicate)(rt_device_t dev, rt_size_t size) = RT_NULL;
+rtt_uds_env_t *uds_example_get_env(void)
+{
+    return uds_env;
+}
 
 /* ==========================================================================
  * Hardware Abstraction Layer
@@ -267,6 +286,158 @@ RTT_UDS_IO_NODE_DEFINE(led_io_node, UDS_EXAMPLE_LED_CTRL_DID, handle_rgb_led_io)
 
 #endif /* UDS_ENABLE_0X2F_IO_SVC */
 
+/**
+ * @brief  Initialize the default configuration for the UDS instance.
+ * @param  cfg       Pointer to the configuration structure.
+ * @param  dev_name  Name of the CAN device.
+ */
+void uds_example_init_config(rtt_uds_config_t *cfg, const char *dev_name)
+{
+    cfg->can_name = dev_name;
+    cfg->phys_id = UDS_ISO_CAN_ID_PHYS;
+    cfg->func_id = UDS_ISO_CAN_ID_FUNC;
+    cfg->resp_id = UDS_ISO_CAN_ID_RESP;
+    cfg->func_resp_id = UDS_TP_NOOP_ADDR; /* No Functional Response ID required */
+
+    cfg->thread_name = "uds_srv";
+    cfg->stack_size = UDS_THREAD_STACK_SIZE;
+    cfg->priority = UDS_THREAD_PRIORITY;
+    cfg->rx_mq_pool_size = UDS_MSG_QUEUE_SIZE;
+}
+
+/**
+ * @brief  Start the UDS server using the given CAN device and config.
+ * @note   The opening and callback settings of the CAN device are 
+ *         handled externally (in the example, MSH/self-start will handle it).
+ */
+rt_err_t uds_example_start(rt_device_t can_dev, const rtt_uds_config_t *cfg)
+{
+    if (!can_dev || !cfg)
+    {
+        rt_kprintf("Error: CAN device or config is NULL.\n");
+        return -RT_EINVAL;
+    }
+
+    if (uds_env)
+    {
+        rt_kprintf("Error: UDS instance is already running.\n");
+        return RT_EOK;
+    }
+
+    /* 3. Create UDS Library Instance */
+    uds_env = rtt_uds_create(cfg);
+    if (!uds_env)
+    {
+        rt_kprintf("Error: Failed to create UDS instance (Out of memory?).\n");
+        return -RT_ERROR;
+    }
+
+    /* 4. Register Services */
+    log_timeout_node_register(uds_env);
+
+#ifdef UDS_ENABLE_SESSION_SVC
+    session_control_node_register(uds_env);
+#endif // UDS_ENABLE_SESSION_SVC
+
+#ifdef UDS_ENABLE_SECURITY_SVC
+    rtt_uds_sec_service_mount(uds_env, &security_service);
+#endif // UDS_ENABLE_SECURITY_SVC
+
+#ifdef UDS_ENABLE_PARAM_SVC
+    param_rdbi_node_register(uds_env);
+    param_wdbi_node_register(uds_env);
+#endif // UDS_ENABLE_PARAM_SVC
+
+#ifdef UDS_ENABLE_CONSOLE_SVC
+    rtt_uds_console_service_mount(uds_env, &console_service);
+#endif // UDS_ENABLE_CONSOLE_SVC
+
+#ifdef UDS_ENABLE_FILE_SVC
+    rtt_uds_file_service_mount(uds_env, &file_service);
+#endif // UDS_ENABLE_FILE_SVC
+
+#ifdef UDS_ENABLE_0X2F_IO_SVC
+    /* 4.1 Register the node implementation to the service definition */
+    uds_io_register_node(&led_io_service, &led_io_node);
+
+    /* 4.2 Mount the service to the UDS environment */
+    rtt_uds_io_service_mount(uds_env, &led_io_service);
+
+    /* 4.3 Start the application timer */
+    led_timer = rt_timer_create("uds_exled", led_demo_timeout, RT_NULL,
+                                500, /* 500ms period */
+                                RT_TIMER_FLAG_PERIODIC | RT_TIMER_FLAG_SOFT_TIMER);
+    if (led_timer)
+        rt_timer_start(led_timer);
+#endif // UDS_ENABLE_0X2F_IO_SVC
+
+#ifdef UDS_ENABLE_0X11_RESET_SVC
+    reset_req_node_register(uds_env);
+    reset_exec_node_register(uds_env);
+#endif // UDS_ENABLE_0X11_RESET_SVC
+
+#ifdef UDS_ENABLE_0X28_COMM_CTRL_SVC
+    rtt_uds_comm_ctrl_service_mount(uds_env, &comm_ctrl_service);
+#endif //UDS_ENABLE_0X28_COMM_CTRL_SVC
+
+    rt_kprintf("UDS Server started on %s.\n", can_dev->parent.name);
+    return RT_EOK;
+}
+
+/**
+ * @brief  Stop the UDS server.
+ */
+rt_err_t uds_example_stop(rt_device_t can_dev)
+{
+    if (!can_dev)
+    {
+        rt_kprintf("Warning: CAN device is NULL.\n");
+        return -RT_EINVAL;
+    }
+
+    if (uds_env)
+    {
+        rt_kprintf("Stopping UDS Server...\n");
+
+#ifdef UDS_ENABLE_0X2F_IO_SVC
+        if (led_timer)
+        {
+            rt_timer_stop(led_timer);
+            rt_timer_delete(led_timer);
+            led_timer = RT_NULL;
+        }
+        /* Optional: Unregister node */
+        uds_io_unregister_node(&led_io_service, &led_io_node);
+#endif // UDS_ENABLE_0X2F_IO_SVC
+
+#ifdef UDS_ENABLE_CONSOLE_SVC
+        rtt_uds_console_service_unmount(&console_service);
+#endif // UDS_ENABLE_CONSOLE_SVC
+
+        /* 1. Unregister all services from environment */
+        rtt_uds_service_unregister_all(uds_env);
+
+        /* 2. Destroy UDS Environment */
+        rtt_uds_destroy(uds_env);
+        uds_env = RT_NULL;
+
+        rt_kprintf("UDS Server stopped.\n");
+        return RT_EOK;
+    }
+    else
+    {
+        rt_kprintf("Warning: UDS is not running.\n");
+        return RT_EOK;
+    }
+}
+
+/**
+ * @brief Example: Start UDS after completing CAN device discovery/configuration.
+ */
+#if UDS_EXAMPLE_AUTO_START || UDS_EXAMPLE_ENABLE_MSH
+/** @brief Storage for the original CAN receive callback to restore on stop */
+static rt_err_t (*old_can_rx_indicate)(rt_device_t dev, rt_size_t size) = RT_NULL;
+
 /* ==========================================================================
  * Integration Glue Code (CAN & System)
  * ========================================================================== */
@@ -357,36 +528,113 @@ static rt_err_t user_can_rx_callback(rt_device_t dev, rt_size_t size)
     return RT_EOK;
 }
 
-/**
- * @brief  Initialize the default configuration for the UDS instance.
- * @param  cfg       Pointer to the configuration structure.
- * @param  dev_name  Name of the CAN device.
- */
-static void uds_example_init_config(rtt_uds_config_t *cfg, const char *dev_name)
+rt_err_t uds_example_hw_start_and_mount(const char *dev_name)
 {
-    cfg->can_name = dev_name;
-    cfg->phys_id = UDS_ISO_CAN_ID_PHYS;
-    cfg->func_id = UDS_ISO_CAN_ID_FUNC;
-    cfg->resp_id = UDS_ISO_CAN_ID_RESP;
-    cfg->func_resp_id = UDS_TP_NOOP_ADDR; /* No Functional Response ID required */
-    cfg->func_resp_id = UDS_TP_NOOP_ADDR;
+    rt_device_t can_dev;
+    rt_bool_t is_running = RT_TRUE;
+    rtt_uds_config_t cfg;
+    rt_err_t ret;
 
-    cfg->thread_name = "uds_srv";
-    cfg->stack_size = UDS_THREAD_STACK_SIZE;
-    cfg->priority = UDS_THREAD_PRIORITY;
-    cfg->rx_mq_pool_size = UDS_MSG_QUEUE_SIZE;
+    can_dev = rt_device_find(dev_name);
+    if (!can_dev)
+    {
+        rt_kprintf("Error: CAN device '%s' not found.\n", dev_name);
+        return -RT_ERROR;
+    }
+
+    /* Save old callback to restore on stop */
+    old_can_rx_indicate = can_dev->rx_indicate;
+
+    /* Re-configure device: Close -> Set Callback -> Open */
+    rt_device_close(can_dev);
+    rt_device_set_rx_indicate(can_dev, user_can_rx_callback);
+    if (rt_device_open(can_dev, RT_DEVICE_FLAG_INT_RX | RT_DEVICE_FLAG_INT_TX) != RT_EOK)
+    {
+        rt_kprintf("Error: Failed to open CAN device.\n");
+        return -RT_ERROR;
+    }
+
+    /* Initialize GPIOs for LEDs */
+#if (UDS_EXAMPLE_PIN_LED_R != -1)
+    rt_pin_mode(UDS_EXAMPLE_PIN_LED_R, PIN_MODE_OUTPUT);
+#endif
+#if (UDS_EXAMPLE_PIN_LED_G != -1)
+    rt_pin_mode(UDS_EXAMPLE_PIN_LED_G, PIN_MODE_OUTPUT);
+#endif
+#if (UDS_EXAMPLE_PIN_LED_B != -1)
+    rt_pin_mode(UDS_EXAMPLE_PIN_LED_B, PIN_MODE_OUTPUT);
+#endif
+
+    /* Configure Hardware Filters (Accept all std frames) */
+#ifdef RT_CAN_USING_HDR
+    struct rt_can_filter_item items[] = {
+        { .id = 0, .ide = RT_CAN_STDID, .rtr = RT_CAN_DTR, .mode = RT_CAN_MODE_MASK, .mask = 0, .hdr_bank = -1 },
+    };
+    struct rt_can_filter_config filter_cfg = { .count = 1, .actived = 1, .items = items };
+    rt_device_control(can_dev, RT_CAN_CMD_SET_FILTER, &filter_cfg);
+#endif
+    /* Start CAN device */
+    rt_device_control(can_dev, RT_CAN_CMD_START, &is_running);
+
+    /* Prepare UDS configuration for the example */
+    uds_example_init_config(&cfg, dev_name);
+
+    ret = uds_example_start(can_dev, &cfg);
+    if (ret != RT_EOK)
+    {
+        is_running = RT_FALSE;
+        rt_device_control(can_dev, RT_CAN_CMD_START, &is_running);
+        rt_device_set_rx_indicate(can_dev, old_can_rx_indicate);
+        rt_device_close(can_dev);
+        old_can_rx_indicate = RT_NULL;
+    }
+    return ret;
 }
 
+/**
+ * @brief Example helper: stop UDS and restore CAN hardware settings.
+ */
+rt_err_t uds_example_hw_stop(const char *dev_name)
+{
+    rt_device_t can_dev;
+    rt_err_t ret = -RT_ERROR;
+
+    can_dev = rt_device_find(dev_name);
+    if (!can_dev)
+    {
+        rt_kprintf("Error: CAN device '%s' not found.\n", dev_name);
+        return -RT_ERROR;
+    }
+
+    ret = uds_example_stop(can_dev);
+
+    /* Restore the original callback and close */
+    rt_device_set_rx_indicate(can_dev, old_can_rx_indicate);
+    rt_device_close(can_dev);
+    old_can_rx_indicate = RT_NULL;
+
+    return ret;
+}
+#endif /* UDS_EXAMPLE_AUTO_START || UDS_EXAMPLE_ENABLE_MSH */
+
+#if UDS_EXAMPLE_AUTO_START
+/**
+ * @brief Auto-start UDS during application init (configured via Kconfig).
+ */
+static int uds_example_app_init(void)
+{
+    return uds_example_hw_start_and_mount(UDS_EXAMPLE_AUTO_CAN_DEV);
+}
+INIT_APP_EXPORT(uds_example_app_init);
+#elif UDS_EXAMPLE_ENABLE_MSH
 /**
  * @brief  Main entry point for the UDS example (MSH command).
  * @usage  uds_example [start|stop] [dev_name]
  */
 static int uds_example(int argc, char **argv)
 {
-    rt_device_t can_dev;
     const char *cmd;
     const char *dev_name;
-    rt_bool_t is_running = RT_TRUE;
 
     if (argc < 3)
     {
@@ -400,171 +648,12 @@ static int uds_example(int argc, char **argv)
     /* --- START Command --- */
     if (!rt_strcmp(cmd, "start"))
     {
-        if (uds_env)
-        {
-            rt_kprintf("Error: UDS instance is already running.\n");
-            return 0;
-        }
-
-        /* 1. Initialize Hardware */
-        can_dev = rt_device_find(dev_name);
-        if (!can_dev)
-        {
-            rt_kprintf("Error: CAN device '%s' not found.\n", dev_name);
-            return -1;
-        }
-
-        /* Save old callback to restore on stop */
-        old_can_rx_indicate = can_dev->rx_indicate;
-
-        /* Re-configure device: Close -> Set Callback -> Open */
-        rt_device_close(can_dev);
-        rt_device_set_rx_indicate(can_dev, user_can_rx_callback);
-        if (rt_device_open(can_dev, RT_DEVICE_FLAG_INT_RX | RT_DEVICE_FLAG_INT_TX) != RT_EOK)
-        {
-            rt_kprintf("Error: Failed to open CAN device.\n");
-            return -1;
-        }
-
-        /* Initialize GPIOs for LEDs */
-#if (UDS_EXAMPLE_PIN_LED_R != -1)
-        rt_pin_mode(UDS_EXAMPLE_PIN_LED_R, PIN_MODE_OUTPUT);
-#endif
-#if (UDS_EXAMPLE_PIN_LED_G != -1)
-        rt_pin_mode(UDS_EXAMPLE_PIN_LED_G, PIN_MODE_OUTPUT);
-#endif
-#if (UDS_EXAMPLE_PIN_LED_B != -1)
-        rt_pin_mode(UDS_EXAMPLE_PIN_LED_B, PIN_MODE_OUTPUT);
-#endif
-
-        /* Configure Hardware Filters (Accept all std frames) */
-#ifdef RT_CAN_USING_HDR
-        struct rt_can_filter_item items[] = {
-            { .id = 0, .ide = RT_CAN_STDID, .rtr = RT_CAN_DTR, .mode = RT_CAN_MODE_MASK, .mask = 0, .hdr_bank = -1 },
-        };
-        struct rt_can_filter_config filter_cfg = { .count = 1, .actived = 1, .items = items };
-        rt_device_control(can_dev, RT_CAN_CMD_SET_FILTER, &filter_cfg);
-#endif
-        /* Start CAN device */
-        rt_device_control(can_dev, RT_CAN_CMD_START, &is_running);
-
-        /* 2. Prepare UDS Configuration */
-        rtt_uds_config_t cfg;
-        uds_example_init_config(&cfg, dev_name);
-
-        /* 3. Create UDS Library Instance */
-        uds_env = rtt_uds_create(&cfg);
-        if (!uds_env)
-        {
-            rt_kprintf("Error: Failed to create UDS instance (Out of memory?).\n");
-            /* 1. Stop CAN device */
-            is_running = RT_FALSE; 
-            rt_device_control(can_dev, RT_CAN_CMD_START, &is_running);
-
-            /* 2. Restore original callback */
-            rt_device_set_rx_indicate(can_dev, old_can_rx_indicate);
-
-            /* 3. Close device */
-            rt_device_close(can_dev);
-            
-            /* 4. Reset global handle */
-            can_dev = RT_NULL;
-            return -1;
-        }
-
-        /* 4. Register Services */
-        log_timeout_node_register(uds_env);
-
-#ifdef UDS_ENABLE_SESSION_SVC
-        session_control_node_register(uds_env);
-#endif // UDS_ENABLE_SESSION_SVC
-
-#ifdef UDS_ENABLE_SECURITY_SVC
-        rtt_uds_sec_service_mount(uds_env, &security_service);
-#endif // UDS_ENABLE_SECURITY_SVC
-
-#ifdef UDS_ENABLE_PARAM_SVC
-        param_rdbi_node_register(uds_env);
-        param_wdbi_node_register(uds_env);
-#endif // UDS_ENABLE_PARAM_SVC
-
-#ifdef UDS_ENABLE_CONSOLE_SVC
-        rtt_uds_console_service_mount(uds_env, &console_service);
-#endif // UDS_ENABLE_CONSOLE_SVC
-
-#ifdef UDS_ENABLE_FILE_SVC
-        rtt_uds_file_service_mount(uds_env, &file_service);
-#endif // UDS_ENABLE_FILE_SVC
-
-#ifdef UDS_ENABLE_0X2F_IO_SVC
-        /* 4.1 Register the node implementation to the service definition */
-        uds_io_register_node(&led_io_service, &led_io_node);
-
-        /* 4.2 Mount the service to the UDS environment */
-        rtt_uds_io_service_mount(uds_env, &led_io_service);
-
-        /* 4.3 Start the application timer */
-        led_timer = rt_timer_create("uds_exled", led_demo_timeout, RT_NULL,
-                                    500, /* 500ms period */
-                                    RT_TIMER_FLAG_PERIODIC | RT_TIMER_FLAG_SOFT_TIMER);
-        if (led_timer)
-            rt_timer_start(led_timer);
-#endif // UDS_ENABLE_0X2F_IO_SVC
-
-#ifdef UDS_ENABLE_0X11_RESET_SVC
-        reset_req_node_register(uds_env);
-        reset_exec_node_register(uds_env);
-#endif // UDS_ENABLE_0X11_RESET_SVC
-
-#ifdef UDS_ENABLE_0X28_COMM_CTRL_SVC
-        rtt_uds_comm_ctrl_service_mount(uds_env, &comm_ctrl_service);
-#endif //UDS_ENABLE_0X28_COMM_CTRL_SVC
-
-        rt_kprintf("UDS Server started on %s.\n", dev_name);
+        uds_example_hw_start_and_mount(dev_name);
     }
     /* --- STOP Command --- */
     else if (!rt_strcmp(cmd, "stop"))
     {
-        if (uds_env)
-        {
-            rt_kprintf("Stopping UDS Server...\n");
-
-#ifdef UDS_ENABLE_0X2F_IO_SVC
-            if (led_timer)
-            {
-                rt_timer_stop(led_timer);
-                rt_timer_delete(led_timer);
-                led_timer = RT_NULL;
-            }
-            /* Optional: Unregister node */
-            uds_io_unregister_node(&led_io_service, &led_io_node);
-#endif // UDS_ENABLE_0X2F_IO_SVC
-
-#ifdef UDS_ENABLE_CONSOLE_SVC
-            rtt_uds_console_service_unmount(&console_service);
-#endif // UDS_ENABLE_CONSOLE_SVC
-
-            /* 1. Unregister all services from environment */
-            rtt_uds_service_unregister_all(uds_env);
-
-            /* 2. Destroy UDS Environment */
-            rtt_uds_destroy(uds_env);
-            uds_env = RT_NULL;
-
-            /* 3. Restore Hardware Configuration */
-            can_dev = rt_device_find(dev_name);
-            if (can_dev)
-            {
-                /* Restore the original callback (e.g., from CAN Open protocol stack or default) */
-                rt_device_set_rx_indicate(can_dev, old_can_rx_indicate);
-                rt_device_close(can_dev);
-            }
-            rt_kprintf("UDS Server stopped.\n");
-        }
-        else
-        {
-            rt_kprintf("Warning: UDS is not running.\n");
-        }
+        uds_example_hw_stop(dev_name);
     }
     else
     {
@@ -575,11 +664,13 @@ static int uds_example(int argc, char **argv)
 }
 /* Register command to MSH (Melon Shell) */
 MSH_CMD_EXPORT(uds_example, Start / Stop UDS server example);
+#endif /* UDS_EXAMPLE_AUTO_START || UDS_EXAMPLE_ENABLE_MSH */
 
 /**
  * @brief  MSH Command: List all registered UDS services.
  * @details Useful for debugging to verify which SIDs are active.
  */
+#if defined(RT_USING_FINSH) && defined(FINSH_USING_MSH)
 static void uds_list(void)
 {
     if (uds_env)
@@ -592,3 +683,4 @@ static void uds_list(void)
     }
 }
 MSH_CMD_EXPORT(uds_list, List registered UDS services);
+#endif /* (RT_USING_FINSH) && defined(FINSH_USING_MSH) */
