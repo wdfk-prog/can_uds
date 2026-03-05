@@ -45,11 +45,12 @@ RTT_UDS_SERVICE_DECLARE(session_control_node);
  * @details Stores configuration (Key/Level) and runtime state (Seed) for a security instance.
  *          Application instantiates this, Service layer uses it.
  */
-typedef struct {
+typedef struct
+{
     /* --- Configuration (Set during init) --- */
-    uint8_t  supported_level;   /**< The security level managed by this instance (e.g., 0x01) */
+    uint8_t supported_level;   /**< The security level managed by this instance (e.g., 0x01) */
     uint32_t secret_key;        /**< Secret key mask for algorithm */
-    
+
     /* --- Runtime State --- */
     uint32_t current_seed;      /**< Current seed waiting for validation (0 = none) */
 
@@ -67,26 +68,17 @@ typedef struct {
  * @param _lvl   Security Level (e.g., 0x01).
  * @param _key   Secret Key (e.g., 0xA5A5A5A5).
  */
-#define RTT_UDS_SEC_SERVICE_DEFINE(_name, _lvl, _key) \
-    static uds_security_service_t _name = { \
-        .supported_level = _lvl, \
-        .secret_key = _key, \
-        .current_seed = 0, \
-        .req_seed_node = { \
-            .list = RT_LIST_OBJECT_INIT(_name.req_seed_node.list), \
-            .name = #_name "_seed", \
-            .context = &_name \
-        }, \
-        .val_key_node = { \
-            .list = RT_LIST_OBJECT_INIT(_name.val_key_node.list), \
-            .name = #_name "_key", \
-            .context = &_name \
-        }, \
-        .timeout_node = { \
-            .list = RT_LIST_OBJECT_INIT(_name.timeout_node.list), \
-            .name = #_name "_tmo", \
-            .context = &_name \
-        } \
+#define RTT_UDS_SEC_SERVICE_DEFINE(_name, _lvl, _key)                                                                       \
+    static uds_security_service_t _name = {                                                                                 \
+        .supported_level = _lvl,                                                                                            \
+        .secret_key = _key,                                                                                                 \
+        .current_seed = 0,                                                                                                  \
+        .req_seed_node = {                                                                                                  \
+            .list = RT_LIST_OBJECT_INIT(_name.req_seed_node.list),                                                          \
+            .name = #_name "_seed",                                                                                         \
+            .context = &_name },                                                                                            \
+        .val_key_node = { .list = RT_LIST_OBJECT_INIT(_name.val_key_node.list), .name = #_name "_key", .context = &_name }, \
+        .timeout_node = { .list = RT_LIST_OBJECT_INIT(_name.timeout_node.list), .name = #_name "_tmo", .context = &_name }  \
     }
 
 /* --- Macros for Runtime Initialization (Dynamic/Stack) --- */
@@ -99,26 +91,27 @@ typedef struct {
  * @param _key      Secret Key.
  */
 #define RTT_UDS_SEC_SERVICE_INIT(_svc_ptr, _name_str, _lvl, _key) \
-    do { \
-        (_svc_ptr)->supported_level = (_lvl); \
-        (_svc_ptr)->secret_key = (_key); \
-        (_svc_ptr)->current_seed = 0; \
-        /* Req Seed Node */ \
-        rt_list_init(&(_svc_ptr)->req_seed_node.list); \
-        (_svc_ptr)->req_seed_node.name = _name_str "_seed"; \
-        (_svc_ptr)->req_seed_node.context = (_svc_ptr); \
+    do                                                            \
+    {                                                             \
+        (_svc_ptr)->supported_level = (_lvl);                     \
+        (_svc_ptr)->secret_key = (_key);                          \
+        (_svc_ptr)->current_seed = 0;                             \
+        /* Req Seed Node */                                       \
+        rt_list_init(&(_svc_ptr)->req_seed_node.list);            \
+        (_svc_ptr)->req_seed_node.name = _name_str "_seed";       \
+        (_svc_ptr)->req_seed_node.context = (_svc_ptr);           \
         (_svc_ptr)->req_seed_node.priority = RTT_UDS_PRIO_NORMAL; \
-        /* Val Key Node */ \
-        rt_list_init(&(_svc_ptr)->val_key_node.list); \
-        (_svc_ptr)->val_key_node.name = _name_str "_key"; \
-        (_svc_ptr)->val_key_node.context = (_svc_ptr); \
-        (_svc_ptr)->val_key_node.priority = RTT_UDS_PRIO_NORMAL; \
-        /* Timeout Node */ \
-        rt_list_init(&(_svc_ptr)->timeout_node.list); \
-        (_svc_ptr)->timeout_node.name = _name_str "_tmo"; \
-        (_svc_ptr)->timeout_node.context = (_svc_ptr); \
-        (_svc_ptr)->timeout_node.priority = RTT_UDS_PRIO_HIGH; \
-    } while(0)
+        /* Val Key Node */                                        \
+        rt_list_init(&(_svc_ptr)->val_key_node.list);             \
+        (_svc_ptr)->val_key_node.name = _name_str "_key";         \
+        (_svc_ptr)->val_key_node.context = (_svc_ptr);            \
+        (_svc_ptr)->val_key_node.priority = RTT_UDS_PRIO_NORMAL;  \
+        /* Timeout Node */                                        \
+        rt_list_init(&(_svc_ptr)->timeout_node.list);             \
+        (_svc_ptr)->timeout_node.name = _name_str "_tmo";         \
+        (_svc_ptr)->timeout_node.context = (_svc_ptr);            \
+        (_svc_ptr)->timeout_node.priority = RTT_UDS_PRIO_HIGH;    \
+    } while (0)
 
 /* --- API --- */
 
@@ -155,16 +148,17 @@ RTT_UDS_SERVICE_DECLARE(param_wdbi_node);
  * @brief Console Service Context
  * @details Encapsulates the Virtual UART Device and the UDS Service Node.
  */
-typedef struct {
+typedef struct
+{
     /* --- RT-Thread Device Object (Must be first for polymorphism) --- */
-    struct rt_device dev;       
+    struct rt_device dev;
 
     /* --- Runtime State --- */
     char buffer[UDS_CONSOLE_BUF_SIZE]; /**< Capture buffer (Static BSS) */
     rt_size_t pos;                     /**< Write position */
     rt_bool_t overflow;                /**< Overflow flag */
     rt_device_t old_console;           /**< Saved previous console */
-    
+
     /* --- Configuration --- */
     const char *dev_name;              /**< Device registration name (e.g. "uds_vcon") */
 
@@ -182,30 +176,30 @@ typedef struct {
  * @param _dev_name_str RT-Thread Device Name (e.g., "uds_vcon").
  */
 #define RTT_UDS_CONSOLE_SERVICE_INIT(_svc_ptr, _name_str, _dev_name_str) \
-    do { \
-        rt_memset((_svc_ptr), 0, sizeof(uds_console_service_t)); \
-        (_svc_ptr)->dev_name = (_dev_name_str); \
-        rt_list_init(&(_svc_ptr)->service_node.list); \
-        (_svc_ptr)->service_node.name = (_name_str); \
-        (_svc_ptr)->service_node.context = (_svc_ptr); \
-    } while(0)
+    do                                                                   \
+    {                                                                    \
+        rt_memset((_svc_ptr), 0, sizeof(uds_console_service_t));         \
+        (_svc_ptr)->dev_name = (_dev_name_str);                          \
+        rt_list_init(&(_svc_ptr)->service_node.list);                    \
+        (_svc_ptr)->service_node.name = (_name_str);                     \
+        (_svc_ptr)->service_node.context = (_svc_ptr);                   \
+    } while (0)
 
 /**
  * @brief  Statically define a Console Service Instance.
  * @param _name      Variable name.
  * @param _dev_name  RT-Thread Device Name string (e.g., "uds_vcon").
  */
-#define RTT_UDS_CONSOLE_SERVICE_DEFINE(_name, _dev_name) \
-    static uds_console_service_t _name = { \
-        .dev_name = _dev_name, \
-        .pos = 0, \
-        .overflow = RT_FALSE, \
-        .old_console = RT_NULL, \
-        .service_node = { \
+#define RTT_UDS_CONSOLE_SERVICE_DEFINE(_name, _dev_name)          \
+    static uds_console_service_t _name = {                        \
+        .dev_name = _dev_name,                                    \
+        .pos = 0,                                                 \
+        .overflow = RT_FALSE,                                     \
+        .old_console = RT_NULL,                                   \
+        .service_node = {                                         \
             .list = RT_LIST_OBJECT_INIT(_name.service_node.list), \
-            .name = #_name, \
-            .context = &_name \
-        } \
+            .name = #_name,                                       \
+            .context = &_name }                                   \
     }
 
 /* --- API --- */
@@ -229,7 +223,8 @@ void rtt_uds_console_service_unmount(uds_console_service_t *svc);
 #define UDS_FILE_MAX_PATH_LEN 64
 #endif
 
-typedef enum {
+typedef enum
+{
     FILE_MODE_IDLE = 0,
     FILE_MODE_WRITING, /**< Uploading (Client -> Server) */
     FILE_MODE_READING  /**< Downloading (Server -> Client) */
@@ -240,7 +235,8 @@ typedef enum {
  * @details Stores the state of the current file transfer session.
  *          Support instantiation to allow multiple contexts (though UDS usually runs one).
  */
-typedef struct {
+typedef struct
+{
     /* Runtime State */
     int fd;                 /**< File Descriptor */
     uint32_t total_size;    /**< Expected total size */
@@ -265,53 +261,41 @@ typedef struct {
  * @param _svc_ptr  Pointer to the service struct.
  * @param _name_str Base name string (e.g., "file_svc").
  */
-#define RTT_UDS_FILE_SERVICE_INIT(_svc_ptr, _name_str) \
-    do { \
+#define RTT_UDS_FILE_SERVICE_INIT(_svc_ptr, _name_str)        \
+    do                                                        \
+    {                                                         \
         rt_memset((_svc_ptr), 0, sizeof(uds_file_service_t)); \
-        (_svc_ptr)->fd = -1; \
-        (_svc_ptr)->mode = FILE_MODE_IDLE; \
-        rt_list_init(&(_svc_ptr)->req_node.list); \
-        (_svc_ptr)->req_node.name = _name_str "_req"; \
-        (_svc_ptr)->req_node.context = (_svc_ptr); \
-        rt_list_init(&(_svc_ptr)->data_node.list); \
-        (_svc_ptr)->data_node.name = _name_str "_data"; \
-        (_svc_ptr)->data_node.context = (_svc_ptr); \
-        rt_list_init(&(_svc_ptr)->exit_node.list); \
-        (_svc_ptr)->exit_node.name = _name_str "_exit"; \
-        (_svc_ptr)->exit_node.context = (_svc_ptr); \
-        rt_list_init(&(_svc_ptr)->timeout_node.list); \
-        (_svc_ptr)->timeout_node.name = _name_str "_tmo"; \
-        (_svc_ptr)->timeout_node.context = (_svc_ptr); \
-    } while(0)
+        (_svc_ptr)->fd = -1;                                  \
+        (_svc_ptr)->mode = FILE_MODE_IDLE;                    \
+        rt_list_init(&(_svc_ptr)->req_node.list);             \
+        (_svc_ptr)->req_node.name = _name_str "_req";         \
+        (_svc_ptr)->req_node.context = (_svc_ptr);            \
+        rt_list_init(&(_svc_ptr)->data_node.list);            \
+        (_svc_ptr)->data_node.name = _name_str "_data";       \
+        (_svc_ptr)->data_node.context = (_svc_ptr);           \
+        rt_list_init(&(_svc_ptr)->exit_node.list);            \
+        (_svc_ptr)->exit_node.name = _name_str "_exit";       \
+        (_svc_ptr)->exit_node.context = (_svc_ptr);           \
+        rt_list_init(&(_svc_ptr)->timeout_node.list);         \
+        (_svc_ptr)->timeout_node.name = _name_str "_tmo";     \
+        (_svc_ptr)->timeout_node.context = (_svc_ptr);        \
+    } while (0)
 
 /**
  * @brief  Statically define a File Service Instance.
  * @param _name Name of the variable.
  */
-#define RTT_UDS_FILE_SERVICE_DEFINE(_name) \
-    static uds_file_service_t _name = { \
-        .fd = -1, \
-        .mode = FILE_MODE_IDLE, \
-        .req_node = { \
-            .list = RT_LIST_OBJECT_INIT(_name.req_node.list), \
-            .name = #_name "_req", \
-            .context = &_name \
-        }, \
-        .data_node = { \
-            .list = RT_LIST_OBJECT_INIT(_name.data_node.list), \
-            .name = #_name "_data", \
-            .context = &_name \
-        }, \
-        .exit_node = { \
-            .list = RT_LIST_OBJECT_INIT(_name.exit_node.list), \
-            .name = #_name "_exit", \
-            .context = &_name \
-        }, \
-        .timeout_node = { \
-            .list = RT_LIST_OBJECT_INIT(_name.timeout_node.list), \
-            .name = #_name "_tmo", \
-            .context = &_name \
-        } \
+#define RTT_UDS_FILE_SERVICE_DEFINE(_name)                                                                                 \
+    static uds_file_service_t _name = {                                                                                    \
+        .fd = -1,                                                                                                          \
+        .mode = FILE_MODE_IDLE,                                                                                            \
+        .req_node = {                                                                                                      \
+            .list = RT_LIST_OBJECT_INIT(_name.req_node.list),                                                              \
+            .name = #_name "_req",                                                                                         \
+            .context = &_name },                                                                                           \
+        .data_node = { .list = RT_LIST_OBJECT_INIT(_name.data_node.list), .name = #_name "_data", .context = &_name },     \
+        .exit_node = { .list = RT_LIST_OBJECT_INIT(_name.exit_node.list), .name = #_name "_exit", .context = &_name },     \
+        .timeout_node = { .list = RT_LIST_OBJECT_INIT(_name.timeout_node.list), .name = #_name "_tmo", .context = &_name } \
     }
 
 /* --- API --- */
@@ -336,6 +320,145 @@ RTT_UDS_SERVICE_DECLARE(reset_req_node);
 #endif //UDS_ENABLE_0X11_RESET_SVC
 
 /* ==========================================================================
+ * Service 0x2A: ReadDataByPeriodicIdentifier (Business Adapter)
+ * ========================================================================== */
+
+#ifdef UDS_ENABLE_0X2A_PERIODIC_SVC
+
+#ifndef UDS_0X2A_MAX_ACTIVE_PDID
+#define UDS_0X2A_MAX_ACTIVE_PDID 8
+#endif
+
+#if (UDS_0X2A_MAX_ACTIVE_PDID < 1)
+#error "UDS_0X2A_MAX_ACTIVE_PDID must be >= 1"
+#endif
+
+/**
+ * @brief 0x2A provider access-check callback type.
+ * @details Called during apply phase for non-stop requests before a PDID is subscribed.
+ *          Return UDS_PositiveResponse when the PDID can be scheduled, otherwise return NRC.
+ *
+ * @param srv UDS server instance.
+ * @param data_id PDID value (F2xx low byte).
+ * @param transmission_mode Requested transmission mode.
+ * @param context Provider private context.
+ * @return UDS_PositiveResponse on success, otherwise NRC.
+ */
+typedef UDSErr_t (*uds_0x2a_access_check_t)(UDSServer_t *srv, uint8_t data_id, UDSRDBPITransmissionMode_t transmission_mode, void *context);
+
+/**
+ * @brief 0x2A provider payload callback type.
+ * @details Called during periodic transmit phase. The provider fills @p payload.
+ *
+ * @param srv UDS server instance.
+ * @param data_id PDID value (F2xx low byte).
+ * @param transmission_mode Active transmission mode.
+ * @param payload Output payload buffer.
+ * @param context Provider private context.
+ * @return UDS_PositiveResponse when payload is ready, otherwise NRC.
+ */
+typedef UDSErr_t (*uds_0x2a_read_data_t)(UDSServer_t *srv, uint8_t data_id, UDSRDBPITransmissionMode_t transmission_mode, UDSPayloadBuffer_t *payload, void *context);
+
+/**
+ * @brief Provider descriptor for one PDID.
+ * @details This structure is also used as one slot entry in service context.
+ */
+typedef struct
+{
+    uint8_t data_id;                /**< PDID value (F2xx low byte) */
+    uds_0x2a_access_check_t check;  /**< optional access/session/security check callback */
+    uds_0x2a_read_data_t read;      /**< payload callback, must not be NULL */
+    void *context;                  /**< user private context */
+    rt_bool_t subscribed;           /**< runtime subscription flag maintained by service */
+} uds_0x2a_provider_t;
+
+/**
+ * @brief 0x2A business-layer service context.
+ * @details Keeps provider bindings and active subscriptions outside iso14229 core.
+ */
+typedef struct
+{
+    uds_0x2a_provider_t slots[UDS_0X2A_MAX_ACTIVE_PDID]; /**< provider/subscription slots */
+    uint8_t slot_count;                                   /**< number of registered provider slots */
+    uint8_t rr_cursor;                                    /**< round-robin cursor for transmit selection */
+    uds_service_node_t apply_node;                        /**< event node for UDS_EVT_ReadPeriodicDataByIdentApply */
+    uds_service_node_t transmit_node;                     /**< event node for UDS_EVT_ReadPeriodicDataByIdentTransmit */
+} uds_0x2a_service_t;
+
+/**
+ * @brief Runtime initialization for 0x2A business service instance.
+ *
+ * @param _svc_ptr Pointer to service context.
+ * @param _name_str Base debug name (for node names).
+ */
+#define RTT_UDS_0X2A_SERVICE_INIT(_svc_ptr, _name_str)            \
+    do                                                            \
+    {                                                             \
+        rt_memset((_svc_ptr), 0, sizeof(uds_0x2a_service_t));     \
+        rt_list_init(&(_svc_ptr)->apply_node.list);               \
+        (_svc_ptr)->apply_node.name = _name_str "_2a_apply";      \
+        (_svc_ptr)->apply_node.context = (_svc_ptr);              \
+        (_svc_ptr)->apply_node.priority = RTT_UDS_PRIO_NORMAL;    \
+        rt_list_init(&(_svc_ptr)->transmit_node.list);            \
+        (_svc_ptr)->transmit_node.name = _name_str "_2a_tx";      \
+        (_svc_ptr)->transmit_node.context = (_svc_ptr);           \
+        (_svc_ptr)->transmit_node.priority = RTT_UDS_PRIO_NORMAL; \
+    } while (0)
+
+/**
+ * @brief Statically define a 0x2A business service instance.
+ *
+ * @param _name Variable name.
+ */
+#define RTT_UDS_0X2A_SERVICE_DEFINE(_name)                                                                                     \
+    static uds_0x2a_service_t _name = {                                                                                        \
+        .slots = { 0 },                                                                                                        \
+        .slot_count = 0,                                                                                                       \
+        .rr_cursor = 0,                                                                                                        \
+        .apply_node = {                                                                                                        \
+            .list = RT_LIST_OBJECT_INIT(_name.apply_node.list),                                                                \
+            .name = #_name "_2a_apply",                                                                                        \
+            .context = &_name },                                                                                               \
+        .transmit_node = { .list = RT_LIST_OBJECT_INIT(_name.transmit_node.list), .name = #_name "_2a_tx", .context = &_name } \
+    }
+
+/**
+ * @brief Register one PDID provider to 0x2A business service.
+ *
+ * @param svc Service context.
+ * @param provider Provider descriptor.
+ * @return RT_EOK on success, otherwise error code.
+ */
+rt_err_t uds_0x2a_register_provider(uds_0x2a_service_t *svc, const uds_0x2a_provider_t *provider);
+
+/**
+ * @brief Unregister one PDID provider.
+ * @details If the PDID is currently active, it is removed from subscriptions.
+ *
+ * @param svc Service context.
+ * @param data_id PDID value.
+ */
+void uds_0x2a_unregister_provider(uds_0x2a_service_t *svc, uint8_t data_id);
+
+/**
+ * @brief Mount 0x2A business service to the UDS dispatcher.
+ *
+ * @param env UDS environment.
+ * @param svc Service context.
+ * @return RT_EOK on success, otherwise error code.
+ */
+rt_err_t rtt_uds_0x2a_service_mount(rtt_uds_env_t *env, uds_0x2a_service_t *svc);
+
+/**
+ * @brief Unmount 0x2A business service from the UDS dispatcher.
+ *
+ * @param svc Service context.
+ */
+void rtt_uds_0x2a_service_unmount(uds_0x2a_service_t *svc);
+
+#endif /* UDS_ENABLE_0X2A_PERIODIC_SVC */
+
+/* ==========================================================================
  * Service 0x2F: InputOutputControlByIdentifier (IO Control)
  * ========================================================================== */
 
@@ -347,37 +470,38 @@ RTT_UDS_SERVICE_DECLARE(reset_req_node);
  *          Default 32 bytes is sufficient for most sensors/actuators.
  */
 #ifndef UDS_IO_MAX_RESP_LEN
-#define UDS_IO_MAX_RESP_LEN  32 /* Kconfig Default: 32 */
+#define UDS_IO_MAX_RESP_LEN 32 /* Kconfig Default: 32 */
 #endif
 
 /**
  * @brief UDS 0x2F InputOutputControlParameter (IOCP) Actions.
  * @details ISO 14229-1:2020 Table 417 - Definition of inputOutputControlParameter values.
  */
-typedef enum {
+typedef enum
+{
     /** 
      * @brief ReturnControlToECU (0x00)
      * The server shall return control of the input/output signal to the internal logic.
      */
-    UDS_IO_ACT_RETURN_CONTROL     = UDS_IOCP_RET_CTRL_TO_ECU,
+    UDS_IO_ACT_RETURN_CONTROL = UDS_IOCP_RET_CTRL_TO_ECU,
 
     /** 
      * @brief ResetToDefault (0x01)
      * The server shall set the input/output signal to its default value.
      */
-    UDS_IO_ACT_RESET_TO_DEFAULT   = UDS_IOCP_RESET_TO_DEFAULT,
+    UDS_IO_ACT_RESET_TO_DEFAULT = UDS_IOCP_RESET_TO_DEFAULT,
 
     /** 
      * @brief FreezeCurrentState (0x02)
      * The server shall freeze the input/output signal at its current value.
      */
-    UDS_IO_ACT_FREEZE_CURRENT     = UDS_IOCP_FREEZE_CUR_STATE,
+    UDS_IO_ACT_FREEZE_CURRENT = UDS_IOCP_FREEZE_CUR_STATE,
 
     /** 
      * @brief ShortTermAdjustment (0x03)
      * The server shall set the input/output signal to the value provided in the controlState parameter.
      */
-    UDS_IO_ACT_SHORT_TERM_ADJ     = UDS_IOCP_SHORT_TERM_ADJ
+    UDS_IO_ACT_SHORT_TERM_ADJ = UDS_IOCP_SHORT_TERM_ADJ
 
 } uds_io_action_t;
 
@@ -444,17 +568,14 @@ typedef struct
  * 
  * @param _name Name of the variable.
  */
-#define RTT_UDS_IO_SERVICE_DEFINE(_name)                                    \
-    static uds_io_service_t _name = {                                       \
-        .node_list = RT_LIST_OBJECT_INIT(_name.node_list),                  \
-        .ctrl_service_node = {                                              \
-            .list = RT_LIST_OBJECT_INIT(_name.ctrl_service_node.list),      \
-            .name = #_name "_ctrl",                                         \
-            .context = &_name },                                            \
-        .timeout_service_node = { \
-            .list = RT_LIST_OBJECT_INIT(_name.timeout_service_node.list),   \
-            .name = #_name "_timeout",                                      \
-            .context = &_name }                                             \
+#define RTT_UDS_IO_SERVICE_DEFINE(_name)                                                                                                       \
+    static uds_io_service_t _name = {                                                                                                          \
+        .node_list = RT_LIST_OBJECT_INIT(_name.node_list),                                                                                     \
+        .ctrl_service_node = {                                                                                                                 \
+            .list = RT_LIST_OBJECT_INIT(_name.ctrl_service_node.list),                                                                         \
+            .name = #_name "_ctrl",                                                                                                            \
+            .context = &_name },                                                                                                               \
+        .timeout_service_node = { .list = RT_LIST_OBJECT_INIT(_name.timeout_service_node.list), .name = #_name "_timeout", .context = &_name } \
     }
 
 /**

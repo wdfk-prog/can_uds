@@ -58,6 +58,7 @@ This project implements the following UDS services defined by the ISO 14229 stan
 | 0x22       | Read Data By Identifier       | Reads parameter values corresponding to Data Identifiers |
 | 0x27       | Security Access               | Security access service to unlock advanced diagnostic functions |
 | 0x28       | Communication Control         | Controls communication behavior (Enables/Disables message transmission/reception) |
+| 0x2A       | ReadDataByPeriodicIdentifier  | Configures periodic server transmission using transmissionMode + PDID list |
 | 0x2E       | Write Data By Identifier      | Writes parameter values corresponding to Data Identifiers |
 | 0x2F       | Input/Output Control          | Controls the behavior of input/output signals |
 | 0x31       | Routine Control               | Controls routine start, stop, and result inquiry |
@@ -408,8 +409,3 @@ Key configurations in the client Makefile:
 CFLAGS += -DISOTP_FC_BS=0      # Block size set to 0 (No flow control)
 CFLAGS += -DISOTP_FC_STMIN=0   # Minimum separation time set to 0
 ```
-
-## 12. related links
-- [iso14229 code](https://github.com/driftregion/iso14229/)
-- [iso14229 client demo](https://github.com/wdfk-prog/iso14229/tree/rtt/examples/rtt_server/client_demo)
-- [iso14229 rtt software](https://github.com/wdfk-prog/can_uds)

@@ -241,6 +241,11 @@ static UDSErr_t server_event_dispatcher(UDSServer_t *srv, UDSEvent_t evt, void *
             if (result == UDS_NRC_RequestOutOfRange ||
                 result == UDS_NRC_SubFunctionNotSupported)
             {
+                /* Keep non-fatal NRC for end-of-chain return instead of collapsing to 0x11. */
+                if (final_result == UDS_NRC_ServiceNotSupported)
+                {
+                    final_result = result;
+                }
                 continue;
             }
 
@@ -256,7 +261,8 @@ static UDSErr_t server_event_dispatcher(UDSServer_t *srv, UDSEvent_t evt, void *
     /* 
      * End of Chain Reached:
      * - If at least one handler returned RTT_UDS_CONTINUE, final_result is PositiveResponse.
-     * - If no handler matched (all returned NotSupported/OutOfRange), final_result is ServiceNotSupported.
+     * - If no handler matched but at least one handler returned ROOR/SFNS, return that non-fatal NRC.
+     * - Otherwise final_result remains ServiceNotSupported.
      */
     return final_result;
 }

@@ -1,6 +1,16 @@
 /**
  * @file service_0x31_console.c
  * @brief Implementation of UDS Service 0x31 (Remote Console) - Context Based.
+ * @author wdfk-prog ()
+ * @version 1.0
+ * @date 2026-02-22
+ * 
+ * @copyright Copyright (c) 2026  
+ * 
+ * @note :
+ * @par Change Log:
+ * Date       Version Author      Description
+ * 2026-02-22 1.0     wdfk-prog   first version
  */
 
 #include "rtt_uds_service.h"

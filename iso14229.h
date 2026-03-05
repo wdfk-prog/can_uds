@@ -234,12 +234,26 @@ TransferData request message from the client. */
 #define UDS_SERVER_DEFAULT_XFER_DATA_MAX_BLOCKLENGTH (UDS_TP_MTU)
 #endif
 
-#ifndef UDS_CUSTOM_MILLIS
-#define UDS_CUSTOM_MILLIS 0
+/*
+ * ReadDataByPeriodicIdentifier (0x2A) defaults.
+ * The timing values are vehicle-manufacturer specific and can be overridden
+ * by build configuration or runtime API.
+ */
+#ifndef UDS_SERVER_0X2A_SLOW_PERIOD_MS
+#define UDS_SERVER_0X2A_SLOW_PERIOD_MS (1000U)
 #endif
 
+#ifndef UDS_SERVER_0X2A_MEDIUM_PERIOD_MS
+#define UDS_SERVER_0X2A_MEDIUM_PERIOD_MS (200U)
+#endif
 
+#ifndef UDS_SERVER_0X2A_FAST_PERIOD_MS
+#define UDS_SERVER_0X2A_FAST_PERIOD_MS (50U)
+#endif
 
+static_assert(UDS_SERVER_0X2A_SLOW_PERIOD_MS > 0, "UDS_SERVER_0X2A_SLOW_PERIOD_MS must be > 0");
+static_assert(UDS_SERVER_0X2A_MEDIUM_PERIOD_MS > 0, "UDS_SERVER_0X2A_MEDIUM_PERIOD_MS must be > 0");
+static_assert(UDS_SERVER_0X2A_FAST_PERIOD_MS > 0, "UDS_SERVER_0X2A_FAST_PERIOD_MS must be > 0");
 
 #if defined UDS_TP_ISOTP_C_SOCKETCAN
 #ifndef UDS_TP_ISOTP_C
@@ -336,35 +350,38 @@ UDSTpStatus_t UDSTpPoll(UDSTp_t *hdl);
 typedef enum UDSEvent {
     UDS_EVT_Err, /**< Common event. Argument type: UDSErr_t * */
 
-    UDS_EVT_DiagSessCtrl,         /**< Server evt 0x10, argtype: UDSDiagSessCtrlArgs_t * */
-    UDS_EVT_EcuReset,             /**< Server evt 0x11, argtype: UDSECUResetArgs_t * */
-    UDS_EVT_ClearDiagnosticInfo,  /**< Server evt 0x14, argtype: UDSCDIArgs_t * */
-    UDS_EVT_ReadDTCInformation,   /**< Server evt 0x19, argtype: UDSRDTCIArgs_t * */
-    UDS_EVT_ReadDataByIdent,      /**< Server evt 0x22, argtype: UDSRDBIArgs_t * */
-    UDS_EVT_ReadMemByAddr,        /**< Server evt 0x23, argtype: UDSReadMemByAddrArgs_t * */
-    UDS_EVT_CommCtrl,             /**< Server evt 0x28, argtype: UDSCommCtrlArgs_t * */
-    UDS_EVT_SecAccessRequestSeed, /**< Server evt 0x27, argtype: UDSSecAccessRequestSeedArgs_t * */
-    UDS_EVT_SecAccessValidateKey, /**< Server evt 0x27, argtype: UDSSecAccessValidateKeyArgs_t * */
-    UDS_EVT_WriteDataByIdent,     /**< Server evt 0x2E, argtype: UDSWDBIArgs_t * */
-    UDS_EVT_WriteMemByAddr,       /**< Server evt 0x3D, argtype: UDSWriteMemByAddrArgs_t * */
-    UDS_EVT_DynamicDefineDataId,  /**< Server evt 0x2C, argtype: UDSDDDIArgs_t * */
-    UDS_EVT_IOControl,            /**< Server evt 0x2F, argtype: UDSIOCtrlArgs_t * */
-    UDS_EVT_RoutineCtrl,          /**< Server evt 0x31, argtype: UDSRoutineCtrlArgs_t * */
-    UDS_EVT_RequestDownload,      /**< Server evt 0x34, argtype: UDSRequestDownloadArgs_t * */
-    UDS_EVT_RequestUpload,        /**< Server evt 0x35, argtype: UDSRequestUploadArgs_t * */
-    UDS_EVT_TransferData,         /**< Server evt 0x36, argtype: UDSTransferDataArgs_t * */
-    UDS_EVT_RequestTransferExit,  /**< Server evt 0x37, argtype: UDSRequestTransferExitArgs_t * */
-    UDS_EVT_SessionTimeout,       /**< Server evt 0x38, argtype: NULL */
-    UDS_EVT_DoScheduledReset,     /**< Server evt 0x39, argtype: uint8_t * */
-    UDS_EVT_RequestFileTransfer,  /**< Server evt 0x38, argtype: UDSRequestFileTransferArgs_t * */
-    UDS_EVT_ControlDTCSetting,    /**< Server evt 0x85, argtype: UDSControlDTCSettingArgs_t * */
-    UDS_EVT_LinkControl,          /**< Server evt 0x87, argtype: UDSLinkCtrlArgs_t * */
-    UDS_EVT_Custom,               /**< Server evt other, argtype: UDSCustomArgs_t * */
+    UDS_EVT_DiagSessCtrl,                    /**< Server evt 0x10, argtype: UDSDiagSessCtrlArgs_t * */
+    UDS_EVT_EcuReset,                        /**< Server evt 0x11, argtype: UDSECUResetArgs_t * */
+    UDS_EVT_ClearDiagnosticInfo,             /**< Server evt 0x14, argtype: UDSCDIArgs_t * */
+    UDS_EVT_ReadDTCInformation,              /**< Server evt 0x19, argtype: UDSRDTCIArgs_t * */
+    UDS_EVT_ReadDataByIdent,                 /**< Server evt 0x22, argtype: UDSRDBIArgs_t * */
+    UDS_EVT_ReadMemByAddr,                   /**< Server evt 0x23, argtype: UDSReadMemByAddrArgs_t * */
+    UDS_EVT_ReadPeriodicDataByIdentApply,    /**< Server evt 0x2A request apply. Argument type: UDSRDBPIApplyArgs_t * */
+    UDS_EVT_ReadPeriodicDataByIdentTransmit, /**< Server evt 0x2A periodic transmit. Argument type: UDSRDBPITransmitArgs_t * */
+    UDS_EVT_CommCtrl,                        /**< Server evt 0x28, argtype: UDSCommCtrlArgs_t * */
+    UDS_EVT_SecAccessRequestSeed,            /**< Server evt 0x27, argtype: UDSSecAccessRequestSeedArgs_t * */
+    UDS_EVT_SecAccessValidateKey,            /**< Server evt 0x27, argtype: UDSSecAccessValidateKeyArgs_t * */
+    UDS_EVT_WriteDataByIdent,                /**< Server evt 0x2E, argtype: UDSWDBIArgs_t * */
+    UDS_EVT_WriteMemByAddr,                  /**< Server evt 0x3D, argtype: UDSWriteMemByAddrArgs_t * */
+    UDS_EVT_DynamicDefineDataId,             /**< Server evt 0x2C, argtype: UDSDDDIArgs_t * */
+    UDS_EVT_IOControl,                       /**< Server evt 0x2F, argtype: UDSIOCtrlArgs_t * */
+    UDS_EVT_RoutineCtrl,                     /**< Server evt 0x31, argtype: UDSRoutineCtrlArgs_t * */
+    UDS_EVT_RequestDownload,                 /**< Server evt 0x34, argtype: UDSRequestDownloadArgs_t * */
+    UDS_EVT_RequestUpload,                   /**< Server evt 0x35, argtype: UDSRequestUploadArgs_t * */
+    UDS_EVT_TransferData,                    /**< Server evt 0x36, argtype: UDSTransferDataArgs_t * */
+    UDS_EVT_RequestTransferExit,             /**< Server evt 0x37, argtype: UDSRequestTransferExitArgs_t * */
+    UDS_EVT_SessionTimeout,                  /**< Server evt 0x38, argtype: NULL */
+    UDS_EVT_DoScheduledReset,                /**< Server evt 0x39, argtype: uint8_t * */
+    UDS_EVT_RequestFileTransfer,             /**< Server evt 0x38, argtype: UDSRequestFileTransferArgs_t * */
+    UDS_EVT_ControlDTCSetting,               /**< Server evt 0x85, argtype: UDSControlDTCSettingArgs_t * */
+    UDS_EVT_LinkControl,                     /**< Server evt 0x87, argtype: UDSLinkCtrlArgs_t * */
+    UDS_EVT_Custom,                          /**< Server evt other, argtype: UDSCustomArgs_t * */
 
-    UDS_EVT_Poll,             /**< Client evt: Poll. Argument type: NULL */
-    UDS_EVT_SendComplete,     /**< Client evt: Send complete. Argument type: NULL */
-    UDS_EVT_ResponseReceived, /**< Client evt: Response received. Argument type: NULL */
-    UDS_EVT_Idle,             /**< Client evt: Idle. Argument type: NULL */
+    UDS_EVT_Poll,                       /**< Client evt: poll. Argument type: NULL */
+    UDS_EVT_SendComplete,               /**< Client evt: request send complete. Argument type: NULL */
+    UDS_EVT_ResponseReceived,           /**< Client evt: response received. Argument type: NULL */
+    UDS_EVT_UnsolicitedPayloadReceived, /**< Client evt: unsolicited payload. Argument type: UDSClientPayloadArgs_t * */
+    UDS_EVT_Idle,                       /**< Client evt: idle. Argument type: NULL */
 
     UDS_EVT_MAX, /**< Unused sentinel value */
 } UDSEvent_t;
@@ -494,6 +511,23 @@ typedef enum {
 #define UDS_LEV_CTRLTP_ERXTXWEAI 5 // EnableRxAndTxWithEnhancedAddressInformation
 
 /**
+ * @brief 0x2A ReadDataByPeriodicIdentifier transmissionMode values.
+ * ISO 14229-1:2020 Annex C Table C.10.
+ */
+typedef enum {
+    UDS_TM_NONE = 0x00,                /**< Internal state: no active periodic mode */
+    UDS_TM_SEND_AT_SLOW_RATE = 0x01,   /**< Schedule periodic transmission at slow rate */
+    UDS_TM_SEND_AT_MEDIUM_RATE = 0x02, /**< Schedule periodic transmission at medium rate */
+    UDS_TM_SEND_AT_FAST_RATE = 0x03,   /**< Schedule periodic transmission at fast rate */
+    UDS_TM_STOP_SENDING = 0x04,        /**< Stop periodic transmission */
+} UDSRDBPITransmissionMode_t;
+
+/**
+ * @brief Number of schedulable periodic rates (slow/medium/fast).
+ */
+#define UDS_RDBPI_RATE_COUNT (3U)
+
+/**
  * @brief 0x2F InputOutputControlByIdentifier - inputOutputControlParameter
  * @details ISO 14229-1:2020 Annex E, Table E.1.
  *          Referenced in Clause 13.2.2.1, Table 399 (Note M1).
@@ -567,6 +601,8 @@ typedef enum {
 #define UDS_0X27_RESP_BASE_LEN 2U
 #define UDS_0X28_REQ_BASE_LEN 3U
 #define UDS_0X28_RESP_LEN 2U
+#define UDS_0X2A_REQ_MIN_LEN 2U
+#define UDS_0X2A_RESP_LEN 1U
 #define UDS_0X2C_REQ_MIN_LEN 2U
 #define UDS_0X2C_RESP_BASE_LEN 2U
 #define UDS_0X2E_REQ_BASE_LEN 3U
@@ -798,6 +834,23 @@ typedef struct UDSClient {
 } UDSClient_t;
 
 /**
+ * @brief Writable payload buffer metadata.
+ */
+typedef struct {
+    uint8_t *data;   /**< Pointer to writable payload bytes. */
+    uint16_t bufLen; /**< Available bytes in @p data. */
+    uint16_t len;    /**< Number of bytes written to @p data. */
+} UDSPayloadBuffer_t;
+
+/**
+ * @brief Client payload event arguments for unsolicited traffic.
+ */
+typedef struct {
+    UDSPayloadBuffer_t payload; /**< Received payload bytes (len/bufLen are equal for this event). */
+    const UDSSDU_t *info;       /**< Optional transport metadata, may be NULL. */
+} UDSClientPayloadArgs_t;
+
+/**
  * @brief Request File Transfer Response structure
  */
 struct RequestFileTransferResponse {
@@ -852,6 +905,8 @@ UDSErr_t UDSSendDiagSessCtrl(UDSClient_t *client, uint8_t mode);
 UDSErr_t UDSSendSecurityAccess(UDSClient_t *client, uint8_t level, uint8_t *data, uint16_t size);
 UDSErr_t UDSSendCommCtrl(UDSClient_t *client, uint8_t ctrl, uint8_t comm);
 UDSErr_t UDSSendCommCtrlWithNodeID(UDSClient_t *client, uint8_t ctrl, uint8_t comm, uint16_t nodeId);
+UDSErr_t UDSSendRDBPI(UDSClient_t *client, UDSRDBPITransmissionMode_t transmissionMode,
+                      const uint8_t *pdidList, uint16_t numPdids);
 UDSErr_t UDSSendRDBI(UDSClient_t *client, const uint16_t *didList,
                      const uint16_t numDataIdentifiers);
 UDSErr_t UDSSendWDBI(UDSClient_t *client, uint16_t dataIdentifier, const uint8_t *data,
@@ -978,6 +1033,10 @@ typedef struct UDSServer {
      */
     bool notReadyToReceive; /**< incoming ISO-TP data will not be processed */
 
+    uint16_t periodicRateMs[UDS_RDBPI_RATE_COUNT]; /**< 0x2A configured rates (slow/medium/fast) */
+    UDSRDBPITransmissionMode_t periodicActiveMode; /**< active periodic transmissionMode */
+    uint32_t periodicNextDueMs; /**< next due time for the active periodic scheduler */
+
     UDSReq_t r; /**< request context */
 } UDSServer_t;
 
@@ -1062,6 +1121,24 @@ typedef struct {
     uint8_t (*copy)(UDSServer_t *srv, const void *src,
                     uint16_t count); /*! function for copying data */
 } UDSRDBIArgs_t;
+
+/**
+ * @brief ReadDataByPeriodicIdentifier (0x2A) request-apply callback arguments.
+ */
+typedef struct {
+    const UDSRDBPITransmissionMode_t transmissionMode; /*! requested transmissionMode */
+    uint8_t periodicDataId;                            /*! periodicDataIdentifier (F2xx low byte) */
+    bool stopAll;                                      /*! true for stopSending with empty PDID list */
+} UDSRDBPIApplyArgs_t;
+
+/**
+ * @brief ReadDataByPeriodicIdentifier (0x2A) periodic-transmit callback arguments.
+ */
+typedef struct {
+    const UDSRDBPITransmissionMode_t transmissionMode; /*! active transmissionMode */
+    uint8_t periodicDataId;                            /*! periodicDataIdentifier (F2xx low byte) */
+    UDSPayloadBuffer_t payload;                        /*! payload buffer filled by handler */
+} UDSRDBPITransmitArgs_t;
 
 /**
  * @brief Read memory by address arguments
@@ -1258,6 +1335,10 @@ typedef struct {
 
 UDSErr_t UDSServerInit(UDSServer_t *srv);
 void UDSServerPoll(UDSServer_t *srv);
+UDSErr_t UDSServerSetPeriodicRate(UDSServer_t *srv, UDSRDBPITransmissionMode_t transmissionMode,
+                                  uint16_t period_ms);
+uint16_t UDSServerGetPeriodicRate(const UDSServer_t *srv,
+                                  UDSRDBPITransmissionMode_t transmissionMode);
 
 #if defined(UDS_TP_ISOTP_C)
 #define ISO_TP_USER_SEND_CAN_ARG 1
