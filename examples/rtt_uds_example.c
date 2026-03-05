@@ -380,6 +380,11 @@ rt_err_t uds_example_start(rt_device_t can_dev, const rtt_uds_config_t *cfg)
     rtt_uds_comm_ctrl_service_mount(uds_env, &comm_ctrl_service);
 #endif //UDS_ENABLE_0X28_COMM_CTRL_SVC
 
+#ifdef UDS_ENABLE_0X2A_PERIODIC_SVC
+    extern rt_err_t uds_0x2a_ulog_example_mount(rtt_uds_env_t *env);
+    uds_0x2a_ulog_example_mount(uds_env);
+#endif // UDS_ENABLE_0X2A_PERIODIC_SVC
+
     rt_kprintf("UDS Server started on %s.\n", can_dev->parent.name);
     return RT_EOK;
 }
@@ -413,6 +418,11 @@ rt_err_t uds_example_stop(rt_device_t can_dev)
 #ifdef UDS_ENABLE_CONSOLE_SVC
         rtt_uds_console_service_unmount(&console_service);
 #endif // UDS_ENABLE_CONSOLE_SVC
+
+#ifdef UDS_ENABLE_0X2A_PERIODIC_SVC
+        extern void uds_0x2a_ulog_example_unmount(void);
+        uds_0x2a_ulog_example_unmount();
+#endif // UDS_ENABLE_0X2A_PERIODIC_SVC
 
         /* 1. Unregister all services from environment */
         rtt_uds_service_unregister_all(uds_env);

@@ -93,6 +93,59 @@ static void changeState(UDSClient_t *client, uint8_t state) {
 }
 
 /**
+ * @brief Checks whether a received frame matches the currently pending request.
+ * @param client UDS client instance.
+ * @param buf Received payload buffer.
+ * @param len Number of bytes in @p buf.
+ * @return true when @p buf is a positive response SID match or a negative response for the pending SID.
+ * @note ISO 14229-1:2020, 8.6 Table 3 defines a negative response A_PDU as:
+ *       0x7F, request SID (SIDNR), NRC. Byte #2 shall echo the request SID.
+ */
+static bool ClientIsExpectedResponse(const UDSClient_t *client, const uint8_t *buf, uint16_t len) {
+    if (len == 0U) {
+        return false;
+    }
+    if (buf[0] == 0x7FU) {
+        return (len >= 3U) && (buf[1] == client->send_buf[0]);
+    }
+    return (buf[0] == UDS_RESPONSE_SID_OF(client->send_buf[0]));
+}
+
+/**
+ * @brief Returns true when a mode is a valid 0x2A request transmissionMode.
+ * @param transmissionMode 0x2A transmission mode to validate.
+ * @return true when @p transmissionMode is in [sendAtSlowRate..stopSending].
+ * @note ISO 14229-1:2020, 11.5.2.1/Table 218.
+ */
+static bool IsRDBPIRequestMode(UDSRDBPITransmissionMode_t transmissionMode) {
+    return transmissionMode >= UDS_TM_SEND_AT_SLOW_RATE && transmissionMode <= UDS_TM_STOP_SENDING;
+}
+
+/**
+ * @brief Emits an unsolicited payload event to the user callback.
+ * @param client UDS client instance.
+ * @param data Payload bytes.
+ * @param len Number of bytes in @p data.
+ * @param info Optional transport metadata, may be NULL.
+ * @return None.
+ */
+static void ClientEmitUnsolicitedPayload(UDSClient_t *client, uint8_t *data, uint16_t len,
+                                         const UDSSDU_t *info) {
+    if (NULL == client || NULL == client->fn || NULL == data || len == 0U) {
+        return;
+    }
+    UDSClientPayloadArgs_t args = {
+        .payload = {
+            .data = data,
+            .bufLen = len,
+            .len = len,
+        },
+        .info = info,
+    };
+    client->fn(client, UDS_EVT_UnsolicitedPayloadReceived, &args);
+}
+
+/**
  * @brief Check that the response is a valid UDS response
  * @param client
  * @return UDSErr_t
@@ -172,6 +225,14 @@ static UDSErr_t HandleServerResponse(UDSClient_t *client) {
             client->p2_star_ms = p2_star;
             break;
         }
+        case kSID_READ_PERIODIC_DATA_BY_IDENTIFIER: {
+            if (client->recv_size != UDS_0X2A_RESP_LEN) {
+                UDS_LOGI(__FILE__, "Error: SID %x response length mismatch (%u)",
+                         kSID_READ_PERIODIC_DATA_BY_IDENTIFIER, client->recv_size);
+                return UDS_ERR_INVALID_ARG;
+            }
+            break;
+        }
         default:
             break;
         }
@@ -195,6 +256,16 @@ static UDSErr_t PollLowLevel(UDSClient_t *client) {
     switch (client->state) {
     case STATE_IDLE: {
         client->options = client->defaultOptions;
+        UDSSDU_t info = {0};
+        ssize_t len = UDSTpRecv(client->tp, client->recv_buf, sizeof(client->recv_buf), &info);
+        if (len > 0 && len <= (ssize_t)UINT16_MAX) {
+            client->recv_size = (uint16_t)len;
+            ClientEmitUnsolicitedPayload(client, client->recv_buf, client->recv_size, &info);
+            client->recv_size = 0;
+        } else if (len > (ssize_t)UINT16_MAX) {
+            /* Defensive: drop oversized indication that cannot fit client->recv_size type. */
+            UDS_LOGW(__FILE__, "dropping oversized unsolicited payload length %zd", len);
+        }
         break;
     }
     case STATE_SENDING: {
@@ -270,6 +341,12 @@ static UDSErr_t PollLowLevel(UDSClient_t *client) {
             UDS_LOGI(__FILE__, "received %zd bytes. Processing...", len);
             UDS_ASSERT(len <= (ssize_t)UINT16_MAX);
             client->recv_size = (uint16_t)len;
+
+            if (!ClientIsExpectedResponse(client, client->recv_buf, client->recv_size)) {
+                ClientEmitUnsolicitedPayload(client, client->recv_buf, client->recv_size, &info);
+                client->recv_size = 0;
+                break;
+            }
 
             err = ValidateServerResponse(client);
             if (UDS_OK == err) {
@@ -409,6 +486,47 @@ UDSErr_t UDSSendCommCtrlWithNodeID(UDSClient_t *client, uint8_t ctrl, uint8_t co
     client->send_buf[4] = (nodeId & 0xFF);
 
     client->send_size = 5;
+    return SendRequest(client);
+}
+
+/**
+ * @brief Sends ReadDataByPeriodicIdentifier (0x2A) request.
+ * @param client UDS client instance.
+ * @param transmissionMode Requested transmission mode.
+ * @param pdidList Pointer to PDID list. Required when @p numPdids is nonzero.
+ * @param numPdids Number of PDIDs in @p pdidList.
+ * @return UDS_OK when the request is queued/sent; otherwise an error code.
+ * @note ISO 14229-1:2020, 11.5.2.1/Table 218 and 11.5.4/Table 223.
+ */
+UDSErr_t UDSSendRDBPI(UDSClient_t *client, UDSRDBPITransmissionMode_t transmissionMode,
+                      const uint8_t *pdidList, uint16_t numPdids) {
+    UDSErr_t err = PreRequestCheck(client);
+    if (err) {
+        return err;
+    }
+
+    if (!IsRDBPIRequestMode(transmissionMode)) {
+        return UDS_ERR_INVALID_ARG;
+    }
+
+    if (transmissionMode != UDS_TM_STOP_SENDING && numPdids == 0) {
+        return UDS_ERR_INVALID_ARG;
+    }
+
+    if (numPdids > 0 && pdidList == NULL) {
+        return UDS_ERR_INVALID_ARG;
+    }
+
+    if ((size_t)UDS_0X2A_REQ_MIN_LEN + numPdids > sizeof(client->send_buf)) {
+        return UDS_ERR_BUFSIZ;
+    }
+
+    client->send_buf[0] = kSID_READ_PERIODIC_DATA_BY_IDENTIFIER;
+    client->send_buf[1] = transmissionMode;
+    if (numPdids > 0) {
+        memmove(&client->send_buf[UDS_0X2A_REQ_MIN_LEN], pdidList, numPdids);
+    }
+    client->send_size = (uint16_t)(UDS_0X2A_REQ_MIN_LEN + numPdids);
     return SendRequest(client);
 }
 
@@ -1160,6 +1278,121 @@ static UDSErr_t EmitEvent(UDSServer_t *srv, UDSEvent_t evt, void *data) {
     return err;
 }
 
+/**
+ * @brief Returns true when a mode has a scheduler rate entry (slow/medium/fast).
+ * @param transmissionMode 0x2A transmission mode to check.
+ * @return true when @p transmissionMode is slow, medium, or fast.
+ */
+static bool IsRDBPISchedulableMode(UDSRDBPITransmissionMode_t transmissionMode) {
+    return transmissionMode >= UDS_TM_SEND_AT_SLOW_RATE &&
+           transmissionMode <= UDS_TM_SEND_AT_FAST_RATE;
+}
+
+/**
+ * @brief Disables the active 0x2A periodic scheduler state.
+ * @param srv UDS server instance.
+ * @return None.
+ */
+static void ServerPeriodicDisable(UDSServer_t *srv) {
+    srv->periodicActiveMode = UDS_TM_NONE;
+    srv->periodicNextDueMs = 0U;
+}
+
+/**
+ * @brief Arms the single active 0x2A scheduler mode.
+ * @param srv UDS server instance.
+ * @param transmissionMode Active mode to arm.
+ * @return true when scheduler was armed; otherwise false.
+ */
+static bool ServerPeriodicArmMode(UDSServer_t *srv, UDSRDBPITransmissionMode_t transmissionMode) {
+    uint16_t periodMs = UDSServerGetPeriodicRate(srv, transmissionMode);
+    if (0U == periodMs) {
+        return false;
+    }
+    srv->periodicActiveMode = transmissionMode;
+    srv->periodicNextDueMs = UDSMillis() + periodMs;
+    return true;
+}
+
+static void ServerPeriodicEmitStopAll(UDSServer_t *srv) {
+    UDSRDBPIApplyArgs_t args = {
+        .transmissionMode = UDS_TM_STOP_SENDING,
+        .periodicDataId = 0U,
+        .stopAll = true,
+    };
+    UDSErr_t err = EmitEvent(srv, UDS_EVT_ReadPeriodicDataByIdentApply, &args);
+    if (UDS_PositiveResponse != err) {
+        UDS_LOGW(__FILE__, "0x2A stop-all apply during session reset returned %d", err);
+    }
+}
+
+static void ServerPeriodicDispatch(UDSServer_t *srv, UDSTpStatus_t tp_status) {
+    if (tp_status & UDS_TP_SEND_IN_PROGRESS) {
+        return;
+    }
+
+    if (!IsRDBPISchedulableMode(srv->periodicActiveMode)) {
+        return;
+    }
+
+    if ((int32_t)(UDSMillis() - srv->periodicNextDueMs) < 0) {
+        return;
+    }
+
+    uint16_t periodMs = UDSServerGetPeriodicRate(srv, srv->periodicActiveMode);
+    if (0U == periodMs) {
+        return;
+    }
+    srv->periodicNextDueMs = UDSMillis() + periodMs;
+
+    uint8_t *txPayload = srv->r.send_buf;
+    const uint16_t payloadCap = (uint16_t)sizeof(srv->r.send_buf);
+    if (payloadCap < 1U) {
+        return;
+    }
+
+    UDSRDBPITransmitArgs_t args = {
+        .transmissionMode = srv->periodicActiveMode,
+        .periodicDataId = 0U,
+        .payload =
+            {
+                .data = &txPayload[1],
+                .bufLen = (uint16_t)(payloadCap - 1U),
+                .len = 0U,
+            },
+    };
+
+    UDSErr_t emitErr = EmitEvent(srv, UDS_EVT_ReadPeriodicDataByIdentTransmit, &args);
+    if (emitErr != UDS_PositiveResponse) {
+        /*
+         * ROOR in periodic transmit means "no data available for this scheduler tick".
+         * This is a normal business state and should be skipped silently.
+         */
+        if (emitErr == UDS_NRC_RequestOutOfRange) {
+            return;
+        }
+        UDS_LOGW(__FILE__, "0x2A periodic transmit skipped for mode 0x%02X, callback returned %d",
+                 srv->periodicActiveMode, emitErr);
+        return;
+    }
+
+    if (args.payload.len > args.payload.bufLen) {
+        UDS_LOGW(__FILE__,
+                 "0x2A periodic transmit skipped for mode 0x%02X, payload too large (%u > %u)",
+                 srv->periodicActiveMode, args.payload.len, args.payload.bufLen);
+        return;
+    }
+
+    txPayload[0] = args.periodicDataId;
+    size_t txLen = 1U + args.payload.len;
+
+    ssize_t txRet = UDSTpSend(srv->tp, txPayload, (ssize_t)txLen, NULL);
+    if (txRet < 0) {
+        UDS_LOGE(__FILE__, "0x2A periodic UDSTpSend failed for mode 0x%02X with %zd",
+                 srv->periodicActiveMode, txRet);
+    }
+}
+
 static UDSErr_t Handle_0x10_DiagnosticSessionControl(UDSServer_t *srv, UDSReq_t *r) {
     if (r->recv_len < UDS_0X10_REQ_LEN) {
         return NegativeResponse(r, UDS_NRC_IncorrectMessageLengthOrInvalidFormat);
@@ -1859,6 +2092,82 @@ static UDSErr_t Handle_0x28_CommunicationControl(UDSServer_t *srv, UDSReq_t *r) 
     r->send_buf[0] = UDS_RESPONSE_SID_OF(kSID_COMMUNICATION_CONTROL);
     r->send_buf[1] = controlType;
     r->send_len = UDS_0X28_RESP_LEN;
+    return UDS_PositiveResponse;
+}
+
+static UDSErr_t Handle_0x2A_ReadDataByPeriodicIdentifier(UDSServer_t *srv, UDSReq_t *r) {
+    /* ISO 14229-1:2020, 11.5 + 11.5.4 (Table 223) */
+    if (r->recv_len < UDS_0X2A_REQ_MIN_LEN) {
+        return NegativeResponse(r, UDS_NRC_IncorrectMessageLengthOrInvalidFormat);
+    }
+
+    UDSRDBPITransmissionMode_t transmissionMode = (UDSRDBPITransmissionMode_t)r->recv_buf[1];
+    if (!IsRDBPIRequestMode(transmissionMode)) {
+        return NegativeResponse(r, UDS_NRC_RequestOutOfRange);
+    }
+
+    size_t numPdids = r->recv_len - UDS_0X2A_REQ_MIN_LEN;
+    if (transmissionMode != UDS_TM_STOP_SENDING && numPdids == 0U) {
+        return NegativeResponse(r, UDS_NRC_IncorrectMessageLengthOrInvalidFormat);
+    }
+
+    if (transmissionMode == UDS_TM_STOP_SENDING && numPdids == 0U) {
+        UDSRDBPIApplyArgs_t args = {
+            .transmissionMode = transmissionMode,
+            .periodicDataId = 0U,
+            .stopAll = true,
+        };
+        UDSErr_t err = EmitEvent(srv, UDS_EVT_ReadPeriodicDataByIdentApply, &args);
+        if (err != UDS_PositiveResponse) {
+            return NegativeResponse(r, err);
+        }
+    } else {
+        bool hasAccepted = false;
+        bool sawSecurityDenied = false;
+        bool sawConditionsNotCorrect = false;
+
+        for (size_t i = 0; i < numPdids; i++) {
+            uint8_t pdid = r->recv_buf[UDS_0X2A_REQ_MIN_LEN + i];
+
+            UDSRDBPIApplyArgs_t applyArgs = {
+                .transmissionMode = transmissionMode,
+                .periodicDataId = pdid,
+                .stopAll = false,
+            };
+            UDSErr_t err = EmitEvent(srv, UDS_EVT_ReadPeriodicDataByIdentApply, &applyArgs);
+
+            if (err == UDS_PositiveResponse) {
+                hasAccepted = true;
+            } else if (err == UDS_NRC_SecurityAccessDenied) {
+                sawSecurityDenied = true;
+            } else if (err == UDS_NRC_ConditionsNotCorrect) {
+                sawConditionsNotCorrect = true;
+            } else if (err == UDS_NRC_RequestOutOfRange) {
+                continue;
+            } else {
+                return NegativeResponse(r, err);
+            }
+        }
+
+        if (sawSecurityDenied) {
+            return NegativeResponse(r, UDS_NRC_SecurityAccessDenied);
+        }
+        if (sawConditionsNotCorrect) {
+            return NegativeResponse(r, UDS_NRC_ConditionsNotCorrect);
+        }
+        if (!hasAccepted) {
+            return NegativeResponse(r, UDS_NRC_RequestOutOfRange);
+        }
+    }
+
+    if (transmissionMode == UDS_TM_STOP_SENDING && numPdids == 0U) {
+        ServerPeriodicDisable(srv);
+    } else {
+        (void)ServerPeriodicArmMode(srv, transmissionMode);
+    }
+
+    r->send_buf[0] = UDS_RESPONSE_SID_OF(kSID_READ_PERIODIC_DATA_BY_IDENTIFIER);
+    r->send_len = UDS_0X2A_RESP_LEN;
     return UDS_PositiveResponse;
 }
 
@@ -2569,7 +2878,7 @@ static UDSService getServiceForSID(uint8_t sid) {
     case kSID_COMMUNICATION_CONTROL:
         return &Handle_0x28_CommunicationControl;
     case kSID_READ_PERIODIC_DATA_BY_IDENTIFIER:
-        return NULL;
+        return &Handle_0x2A_ReadDataByPeriodicIdentifier;
     case kSID_DYNAMICALLY_DEFINE_DATA_IDENTIFIER:
         return &Handle_0x2C_DynamicDefineDataIdentifier;
     case kSID_WRITE_DATA_BY_IDENTIFIER:
@@ -2743,7 +3052,33 @@ UDSErr_t UDSServerInit(UDSServer_t *srv) {
     srv->sec_access_boot_delay_timer =
         UDSMillis() + UDS_SERVER_0x27_BRUTE_FORCE_MITIGATION_BOOT_DELAY_MS;
     srv->sec_access_auth_fail_timer = UDSMillis();
+    srv->periodicRateMs[(size_t)UDS_TM_SEND_AT_SLOW_RATE - 1U] = UDS_SERVER_0X2A_SLOW_PERIOD_MS;
+    srv->periodicRateMs[(size_t)UDS_TM_SEND_AT_MEDIUM_RATE - 1U] =
+        UDS_SERVER_0X2A_MEDIUM_PERIOD_MS;
+    srv->periodicRateMs[(size_t)UDS_TM_SEND_AT_FAST_RATE - 1U] = UDS_SERVER_0X2A_FAST_PERIOD_MS;
+    ServerPeriodicDisable(srv);
     return UDS_OK;
+}
+
+UDSErr_t UDSServerSetPeriodicRate(UDSServer_t *srv, UDSRDBPITransmissionMode_t transmissionMode,
+                                  uint16_t period_ms) {
+    if (NULL == srv || period_ms == 0U || !IsRDBPISchedulableMode(transmissionMode)) {
+        return UDS_ERR_INVALID_ARG;
+    }
+
+    srv->periodicRateMs[(size_t)transmissionMode - 1U] = period_ms;
+    if (srv->periodicActiveMode == transmissionMode) {
+        (void)ServerPeriodicArmMode(srv, transmissionMode);
+    }
+    return UDS_OK;
+}
+
+uint16_t UDSServerGetPeriodicRate(const UDSServer_t *srv,
+                                  UDSRDBPITransmissionMode_t transmissionMode) {
+    if (NULL == srv || !IsRDBPISchedulableMode(transmissionMode)) {
+        return 0U;
+    }
+    return srv->periodicRateMs[(size_t)transmissionMode - 1U];
 }
 
 void UDSServerPoll(UDSServer_t *srv) {
@@ -2755,13 +3090,15 @@ void UDSServerPoll(UDSServer_t *srv) {
         srv->securityLevel = 0;
         srv->commState_Normal = UDS_LEV_CTRLTP_ERXTX;
         srv->commState_NM     = UDS_LEV_CTRLTP_ERXTX;
+        ServerPeriodicEmitStopAll(srv);
+        ServerPeriodicDisable(srv);
     }
 
     if (srv->ecuResetScheduled && UDSTimeAfter(UDSMillis(), srv->ecuResetTimer)) {
         EmitEvent(srv, UDS_EVT_DoScheduledReset, &srv->ecuResetScheduled);
     }
 
-    UDSTpPoll(srv->tp);
+    UDSTpStatus_t tp_status = UDSTpPoll(srv->tp);
 
     UDSReq_t *r = &srv->r;
 
@@ -2838,6 +3175,8 @@ void UDSServerPoll(UDSServer_t *srv) {
             if (UDS_NRC_RequestCorrectlyReceived_ResponsePending == response) {
                 srv->RCRRP = true;
             }
+        } else {
+            ServerPeriodicDispatch(srv, tp_status);
         }
     }
 }
@@ -3081,6 +3420,10 @@ const char *UDSEventToStr(UDSEvent_t evt) {
         return "UDS_EVT_ReadDTCInformation";
     case UDS_EVT_ReadDataByIdent:
         return "UDS_EVT_ReadDataByIdent";
+    case UDS_EVT_ReadPeriodicDataByIdentApply:
+        return "UDS_EVT_ReadPeriodicDataByIdentApply";
+    case UDS_EVT_ReadPeriodicDataByIdentTransmit:
+        return "UDS_EVT_ReadPeriodicDataByIdentTransmit";
     case UDS_EVT_ReadMemByAddr:
         return "UDS_EVT_ReadMemByAddr";
     case UDS_EVT_CommCtrl:
@@ -3123,6 +3466,8 @@ const char *UDSEventToStr(UDSEvent_t evt) {
         return "UDS_EVT_SendComplete";
     case UDS_EVT_ResponseReceived:
         return "UDS_EVT_ResponseReceived";
+    case UDS_EVT_UnsolicitedPayloadReceived:
+        return "UDS_EVT_UnsolicitedPayloadReceived";
     case UDS_EVT_Idle:
         return "UDS_EVT_Idle";
     case UDS_EVT_MAX:

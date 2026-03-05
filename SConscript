@@ -8,7 +8,10 @@ path    = [cwd]
 path    += [cwd + '/service']
 
 if GetDepend('UDS_USING_EXAMPLE'):
-    src += Glob('examples/*.c')
+    src += Glob('examples/rtt_uds_example.c')
+
+if GetDepend('UDS_USING_EXAMPLE') and GetDepend('UDS_EXAMPLE_0X2A_ULOG'):
+    src += Glob('examples/rtt_uds_0x2a_ulog_example.c')
 
 if GetDepend('UDS_ENABLE_SESSION_SVC'):
     src += Glob('service/service_0x10_session.c')
@@ -33,6 +36,9 @@ if GetDepend('UDS_ENABLE_0X11_RESET_SVC'):
 
 if GetDepend('UDS_ENABLE_0X28_COMM_CTRL_SVC'):
     src += Glob('service/service_0x28_comm.c')
+
+if GetDepend('UDS_ENABLE_0X2A_PERIODIC_SVC'):
+    src += Glob('service/service_0x2A_periodic.c')
 
 group = DefineGroup('can_uds', src, depend = ['PKG_USING_ISO14229'], CPPPATH = path)
 
