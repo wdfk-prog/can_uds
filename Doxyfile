@@ -1,0 +1,94 @@
+DOXYFILE_ENCODING      = UTF-8
+PROJECT_NAME           = "can_uds"
+PROJECT_BRIEF          = "RT-Thread based UDS (ISO 14229) server stack"
+PROJECT_NUMBER         = main
+
+OUTPUT_DIRECTORY       = build/doxygen
+CREATE_SUBDIRS         = NO
+ALLOW_UNICODE_NAMES    = YES
+OUTPUT_LANGUAGE        = English
+BRIEF_MEMBER_DESC      = YES
+REPEAT_BRIEF           = YES
+
+OPTIMIZE_OUTPUT_FOR_C  = YES
+TYPEDEF_HIDES_STRUCT   = YES
+
+INPUT                  = \
+                         iso14229.c \
+                         iso14229.h \
+                         iso14229_rtt.c \
+                         iso14229_rtt.h \
+                         service \
+                         examples \
+                         docs/doxygen-mainpage.md \
+                         docs/zh \
+                         docs/en
+
+FILE_PATTERNS          = *.c \
+                         *.h \
+                         *.md
+
+RECURSIVE              = YES
+EXCLUDE                = \
+                         build \
+                         .git \
+                         .github
+
+EXCLUDE_PATTERNS       = \
+                         */build/* \
+                         */.git/*
+
+MARKDOWN_SUPPORT       = YES
+TOC_INCLUDE_HEADINGS   = 3
+USE_MDFILE_AS_MAINPAGE = docs/doxygen-mainpage.md
+
+EXTRACT_ALL            = YES
+EXTRACT_STATIC         = YES
+EXTRACT_LOCAL_CLASSES  = YES
+EXTRACT_PRIVATE        = NO
+HIDE_UNDOC_MEMBERS     = NO
+HIDE_UNDOC_CLASSES     = NO
+
+SORT_MEMBER_DOCS       = YES
+SORT_BRIEF_DOCS        = YES
+SORT_BY_SCOPE_NAME     = YES
+
+GENERATE_HTML          = YES
+HTML_OUTPUT            = html
+HTML_FILE_EXTENSION    = .html
+GENERATE_TREEVIEW      = YES
+FULL_SIDEBAR           = YES
+HTML_DYNAMIC_MENUS     = YES
+SEARCHENGINE           = YES
+SERVER_BASED_SEARCH    = NO
+
+GENERATE_LATEX         = NO
+GENERATE_MAN           = NO
+GENERATE_RTF           = NO
+GENERATE_XML           = NO
+
+SOURCE_BROWSER         = YES
+INLINE_SOURCES         = NO
+REFERENCES_RELATION    = YES
+REFERENCED_BY_RELATION = YES
+SHOW_INCLUDE_FILES     = YES
+SHOW_HEADERFILE        = YES
+
+HAVE_DOT               = YES
+DOT_IMAGE_FORMAT       = svg
+INTERACTIVE_SVG        = YES
+CALL_GRAPH             = YES
+CALLER_GRAPH           = YES
+CLASS_GRAPH            = YES
+COLLABORATION_GRAPH    = YES
+INCLUDE_GRAPH          = YES
+INCLUDED_BY_GRAPH      = YES
+DIRECTORY_GRAPH        = YES
+GROUP_GRAPHS           = YES
+UML_LOOK               = YES
+DOT_NUM_THREADS        = 0
+
+QUIET                  = NO
+WARNINGS               = YES
+WARN_IF_UNDOCUMENTED   = NO
+WARN_IF_DOC_ERROR      = YES

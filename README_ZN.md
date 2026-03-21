@@ -127,16 +127,24 @@ static int uds_app_init(void)
 
 ---
 
-## 6. 文档索引（中文）
+## 6. 文档
 
-- [`docs/zh/architecture.md`](docs/zh/architecture.md)
-- [`docs/zh/quick-start.md`](docs/zh/quick-start.md)
-- [`docs/zh/service-guide.md`](docs/zh/service-guide.md)
-- [`docs/zh/did-design.md`](docs/zh/did-design.md)
-- [`docs/zh/file-transfer.md`](docs/zh/file-transfer.md)
-- [`docs/zh/console-service.md`](docs/zh/console-service.md)
-- [`docs/zh/0x2a-periodic.md`](docs/zh/0x2a-periodic.md)
-- [`docs/zh/porting-notes.md`](docs/zh/porting-notes.md)
+### API Documentation
+
+完整的 API 参考文档（HTML 格式）已通过 GitHub Pages 发布：
+
+➡️ https://wdfk-prog.space/can_uds/
+
+### 项目文档（中文）
+
+- [架构说明](docs/zh/architecture.md)
+- [快速接入](docs/zh/quick-start.md)
+- [服务总览](docs/zh/service-guide.md)
+- [DID 设计建议](docs/zh/did-design.md)
+- [文件传输设计](docs/zh/file-transfer.md)
+- [远程控制台服务](docs/zh/console-service.md)
+- [0x2A 周期数据服务](docs/zh/0x2a-periodic.md)
+- [迁移与裁剪说明](docs/zh/porting-notes.md)
 
 ---
 
