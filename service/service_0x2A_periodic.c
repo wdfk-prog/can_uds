@@ -95,7 +95,9 @@ static void remove_slot_compact(uds_0x2a_service_t *svc, uint8_t idx)
 }
 
 /**
- * @brief Apply subscription updates for UDS 0x2A.
+ * @brief Apply a periodic-data subscription change.
+ * @details This handles stop-all, stop-one, and subscribe operations. For subscribe requests,
+ *          the provider-specific access-check callback is executed before the slot is marked active.
  * @param srv UDS server instance.
  * @param data Pointer to UDSRDBPIApplyArgs_t.
  * @param context Pointer to uds_0x2a_service_t.
@@ -149,7 +151,9 @@ static UDS_HANDLER(handle_0x2a_apply)
 }
 
 /**
- * @brief Select and transmit one periodic payload (round-robin).
+ * @brief Produce one periodic payload in round-robin order.
+ * @details The service scans from the current cursor until it finds one subscribed provider,
+ *          then asks that provider to fill the payload buffer owned by the core request context.
  * @param srv UDS server instance.
  * @param data Pointer to UDSRDBPITransmitArgs_t.
  * @param context Pointer to uds_0x2a_service_t.

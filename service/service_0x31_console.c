@@ -32,9 +32,27 @@
  * Virtual Device Logic (RT-Thread Device Ops)
  * ========================================================================== */
 
-static rt_err_t vcon_init(rt_device_t dev) { return RT_EOK; }
-static rt_err_t vcon_open(rt_device_t dev, rt_uint16_t oflag) { return RT_EOK; }
-static rt_err_t vcon_close(rt_device_t dev) { return RT_EOK; }
+/**
+ * @brief Initialize the virtual console device.
+ * @param dev Virtual device instance.
+ * @return RT_EOK.
+ */
+static rt_err_t vcon_init(rt_device_t dev) { (void)dev; return RT_EOK; }
+
+/**
+ * @brief Open the virtual console device.
+ * @param dev Virtual device instance.
+ * @param oflag Open flags.
+ * @return RT_EOK.
+ */
+static rt_err_t vcon_open(rt_device_t dev, rt_uint16_t oflag) { (void)dev; (void)oflag; return RT_EOK; }
+
+/**
+ * @brief Close the virtual console device.
+ * @param dev Virtual device instance.
+ * @return RT_EOK.
+ */
+static rt_err_t vcon_close(rt_device_t dev) { (void)dev; return RT_EOK; }
 
 /**
  * @brief  Virtual Write Implementation.
@@ -95,6 +113,9 @@ static rt_ssize_t vcon_write(rt_device_t dev, rt_off_t pos, const void *buffer, 
     return size;
 }
 
+/**
+ * @brief Operations table for the virtual console device.
+ */
 const struct rt_device_ops vcon_ops = {
     .init = vcon_init,
     .open = vcon_open,
@@ -106,6 +127,11 @@ const struct rt_device_ops vcon_ops = {
  * Console Switching Helpers
  * ========================================================================== */
 
+/**
+ * @brief Start capturing console output into the service buffer.
+ * @param ctx Console service context.
+ * @return RT_EOK on success, otherwise a negative RT-Thread error code.
+ */
 static rt_err_t capture_start(uds_console_service_t *ctx)
 {
     /* 1. Reset Buffer state */
@@ -140,6 +166,10 @@ static rt_err_t capture_start(uds_console_service_t *ctx)
     return RT_EOK;
 }
 
+/**
+ * @brief Stop capturing console output and restore the original console device.
+ * @param ctx Console service context.
+ */
 static void capture_stop(uds_console_service_t *ctx)
 {
     /* Restore original console */
@@ -158,6 +188,16 @@ static void capture_stop(uds_console_service_t *ctx)
  * Service Handler
  * ========================================================================== */
 
+/**
+ * @brief Execute a remote shell command through RoutineControl.
+ * @details The request payload is interpreted as an MSH command line. Output is
+ * captured from a temporary virtual console and returned through statusRecord.
+ *
+ * @param srv UDS server instance.
+ * @param data Pointer to UDSRoutineCtrlArgs_t.
+ * @param context Pointer to uds_console_service_t.
+ * @return UDS_PositiveResponse on success, otherwise a negative response code.
+ */
 static UDS_HANDLER(handle_remote_console)
 {
     uds_console_service_t *ctx = (uds_console_service_t *)context;
@@ -223,6 +263,12 @@ static UDS_HANDLER(handle_remote_console)
  * Public API
  * ========================================================================== */
 
+/**
+ * @brief Mount the remote-console service into an RT-Thread UDS environment.
+ * @param env UDS environment.
+ * @param svc Console service context.
+ * @return RT_EOK on success, otherwise a negative RT-Thread error code.
+ */
 rt_err_t rtt_uds_console_service_mount(rtt_uds_env_t *env, uds_console_service_t *svc)
 {
     if (!env || !svc) return -RT_EINVAL;
@@ -254,6 +300,10 @@ rt_err_t rtt_uds_console_service_mount(rtt_uds_env_t *env, uds_console_service_t
     return rtt_uds_service_register(env, &svc->service_node);
 }
 
+/**
+ * @brief Unmount the remote-console service and unregister its virtual device.
+ * @param svc Console service context.
+ */
 void rtt_uds_console_service_unmount(uds_console_service_t *svc)
 {
     if (!svc) return;
