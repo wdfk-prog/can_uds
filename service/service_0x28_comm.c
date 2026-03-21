@@ -64,13 +64,14 @@ static void apply_comm_state(UDSServer_t *srv, uint8_t ctrl_type, uint8_t comm_t
  * ========================================================================== */
 
 /**
- * @brief  Handler for Service 0x28 (CommunicationControl).
- * @details 
- *  - For Global Control types (0x00-0x03): The ISO14229 core library automatically 
- *    updates the state *after* this handler returns PositiveResponse.
- *  - For Node-Specific types (0x04-0x05): The core library CANNOT update the state 
- *    automatically because it doesn't know the local Node ID. This handler MUST 
- *    check the Node ID and update the state manually if matched.
+ * @brief Handle one SID 0x28 CommunicationControl request.
+ * @details Global control subfunctions are validated here and then finalized by the core.
+ *          Addressed control subfunctions are matched against the local node ID and translated
+ *          into the equivalent internal RX/TX state update.
+ * @param srv UDS server instance.
+ * @param data Pointer to UDSCommCtrlArgs_t.
+ * @param context Pointer to uds_comm_ctrl_service_t.
+ * @return UDS_PositiveResponse on success, otherwise an NRC.
  */
 static UDS_HANDLER(handle_comm_control)
 {
@@ -144,9 +145,9 @@ static UDS_HANDLER(handle_comm_control)
  * ========================================================================== */
 
 /**
- * @brief  Update the Node ID at runtime.
- * @param  svc     Pointer to service context.
- * @param  node_id New Node ID.
+ * @brief Update the local node identifier used by addressed 0x28 control.
+ * @param svc Communication-control service context.
+ * @param node_id Application-defined node identifier.
  */
 void rtt_uds_comm_ctrl_set_id(uds_comm_ctrl_service_t *svc, uint16_t node_id)
 {
@@ -158,10 +159,11 @@ void rtt_uds_comm_ctrl_set_id(uds_comm_ctrl_service_t *svc, uint16_t node_id)
 }
 
 /**
- * @brief  Mount the 0x28 Service to the UDS Core.
- * @param  env Pointer to UDS environment.
- * @param  svc Pointer to service context.
- * @return RT_EOK on success.
+ * @brief Mount one communication-control service instance.
+ * @details The node is rebound to UDS_EVT_CommCtrl so both static and runtime initialization paths behave the same.
+ * @param env UDS environment.
+ * @param svc Communication-control service context.
+ * @return RT_EOK on success, otherwise a negative RT-Thread error code.
  */
 rt_err_t rtt_uds_comm_ctrl_service_mount(rtt_uds_env_t *env, uds_comm_ctrl_service_t *svc)
 {
@@ -186,8 +188,8 @@ rt_err_t rtt_uds_comm_ctrl_service_mount(rtt_uds_env_t *env, uds_comm_ctrl_servi
 }
 
 /**
- * @brief  Unmount the 0x28 Service from the UDS Core.
- * @param  svc Pointer to service context.
+ * @brief Unmount one communication-control service instance.
+ * @param svc Communication-control service context.
  */
 void rtt_uds_comm_ctrl_service_unmount(uds_comm_ctrl_service_t *svc)
 {

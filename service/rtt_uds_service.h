@@ -41,9 +41,9 @@ RTT_UDS_SERVICE_DECLARE(session_control_node);
 #ifdef UDS_ENABLE_SECURITY_SVC
 
 /**
- * @brief Security Service Context Object.
- * @details Stores configuration (Key/Level) and runtime state (Seed) for a security instance.
- *          Application instantiates this, Service layer uses it.
+ * @brief Security-access service context.
+ * @details Stores configuration (supported level and secret key), current seed,
+ *          and the internal service nodes used by SID 0x27.
  */
 typedef struct
 {
@@ -116,14 +116,16 @@ typedef struct
 /* --- API --- */
 
 /**
- * @brief  Mount Security Service to UDS Core.
- * @param  env Pointer to UDS environment.
- * @param  svc Pointer to Security service context.
+ * @brief Mount one security-access service instance.
+ * @param env UDS environment.
+ * @param svc Security service context.
+ * @return RT_EOK on success, otherwise a negative RT-Thread error code.
  */
 rt_err_t rtt_uds_sec_service_mount(rtt_uds_env_t *env, uds_security_service_t *svc);
 
 /**
- * @brief  Unmount Security Service.
+ * @brief Unmount one security-access service instance.
+ * @param svc Security service context.
  */
 void rtt_uds_sec_service_unmount(uds_security_service_t *svc);
 
@@ -205,14 +207,18 @@ typedef struct
 /* --- API --- */
 
 /**
- * @brief  Mount the Console Service.
- * @details Registers the Virtual Device to RT-Thread and the Node to UDS Core.
+ * @brief Mount one remote-console service instance.
+ * @details Registers the virtual capture device and binds the 0x31 routine node.
+ * @param env UDS environment.
+ * @param svc Console service context.
+ * @return RT_EOK on success, otherwise a negative RT-Thread error code.
  */
 rt_err_t rtt_uds_console_service_mount(rtt_uds_env_t *env, uds_console_service_t *svc);
 
 /**
- * @brief  Unmount the Console Service.
- * @details Unregisters the Virtual Device and UDS Node.
+ * @brief Unmount one remote-console service instance.
+ * @details Unregisters the virtual device and removes the routine handler node.
+ * @param svc Console service context.
  */
 void rtt_uds_console_service_unmount(uds_console_service_t *svc);
 #endif //UDS_ENABLE_CONSOLE_SVC
@@ -223,11 +229,14 @@ void rtt_uds_console_service_unmount(uds_console_service_t *svc);
 #define UDS_FILE_MAX_PATH_LEN 64
 #endif
 
+/**
+ * @brief File-transfer session mode.
+ */
 typedef enum
 {
-    FILE_MODE_IDLE = 0,
-    FILE_MODE_WRITING, /**< Uploading (Client -> Server) */
-    FILE_MODE_READING  /**< Downloading (Server -> Client) */
+    FILE_MODE_IDLE = 0, /**< No active transfer session. */
+    FILE_MODE_WRITING,  /**< Client uploads data to the ECU. */
+    FILE_MODE_READING   /**< ECU uploads data back to the client. */
 } uds_file_mode_t;
 
 /**
@@ -301,15 +310,16 @@ typedef struct
 /* --- API --- */
 
 /**
- * @brief  Mount the File Service to the UDS Core.
- * @param  env Pointer to UDS environment.
- * @param  svc Pointer to file service context.
- * @return RT_EOK on success.
+ * @brief Mount one file-transfer service instance.
+ * @param env UDS environment.
+ * @param svc File service context.
+ * @return RT_EOK on success, otherwise a negative RT-Thread error code.
  */
 rt_err_t rtt_uds_file_service_mount(rtt_uds_env_t *env, uds_file_service_t *svc);
 
 /**
- * @brief  Unmount the File Service.
+ * @brief Unmount one file-transfer service instance.
+ * @param svc File service context.
  */
 void rtt_uds_file_service_unmount(uds_file_service_t *svc);
 #endif //UDS_ENABLE_FILE_SVC
@@ -423,36 +433,33 @@ typedef struct
     }
 
 /**
- * @brief Register one PDID provider to 0x2A business service.
- *
- * @param svc Service context.
+ * @brief Register one periodic-data provider.
+ * @details The provider is keyed by PDID. Duplicate registration with different callbacks is rejected.
+ * @param svc 0x2A service context.
  * @param provider Provider descriptor.
- * @return RT_EOK on success, otherwise error code.
+ * @return RT_EOK on success, otherwise a negative RT-Thread error code.
  */
 rt_err_t uds_0x2a_register_provider(uds_0x2a_service_t *svc, const uds_0x2a_provider_t *provider);
 
 /**
- * @brief Unregister one PDID provider.
- * @details If the PDID is currently active, it is removed from subscriptions.
- *
- * @param svc Service context.
- * @param data_id PDID value.
+ * @brief Unregister one periodic-data provider by PDID.
+ * @details If the PDID is active, the subscription state is cleared together with the provider slot.
+ * @param svc 0x2A service context.
+ * @param data_id Periodic data identifier.
  */
 void uds_0x2a_unregister_provider(uds_0x2a_service_t *svc, uint8_t data_id);
 
 /**
- * @brief Mount 0x2A business service to the UDS dispatcher.
- *
+ * @brief Mount one 0x2A periodic-data service instance.
  * @param env UDS environment.
- * @param svc Service context.
- * @return RT_EOK on success, otherwise error code.
+ * @param svc 0x2A service context.
+ * @return RT_EOK on success, otherwise a negative RT-Thread error code.
  */
 rt_err_t rtt_uds_0x2a_service_mount(rtt_uds_env_t *env, uds_0x2a_service_t *svc);
 
 /**
- * @brief Unmount 0x2A business service from the UDS dispatcher.
- *
- * @param svc Service context.
+ * @brief Unmount one 0x2A periodic-data service instance.
+ * @param svc 0x2A service context.
  */
 void rtt_uds_0x2a_service_unmount(uds_0x2a_service_t *svc);
 
@@ -631,47 +638,41 @@ typedef struct
 /* --- Public API --- */
 
 /**
- * @brief  Register a hardware node to the IO Service.
- * @param  svc  Pointer to IO service context.
- * @param  node Pointer to IO node.
- * @return RT_EOK on success.
- *         -RT_EINVAL if arguments are NULL or handler is missing.
- *         -RT_EBUSY if the node is already registered (linked to a list).
+ * @brief Register one IO-control node.
+ * @details The node becomes part of the service-owned DID dispatch table.
+ * @param svc IO service context.
+ * @param node Node descriptor.
+ * @return RT_EOK on success, otherwise a negative RT-Thread error code.
  */
 rt_err_t uds_io_register_node(uds_io_service_t *svc, uds_io_node_t *node);
 
 /**
- * @brief  Unregister a hardware node from the IO Service.
- * @note   Does NOT automatically reset hardware state if currently overridden.
- * @param  svc  Pointer to IO service context.
- * @param  node Pointer to IO node.
+ * @brief Unregister one IO-control node.
+ * @details This only detaches the descriptor. It does not force hardware back to the default state.
+ * @param svc IO service context.
+ * @param node Node descriptor.
  */
 void uds_io_unregister_node(uds_io_service_t *svc, uds_io_node_t *node);
 
 /**
- * @brief  Mount the IO Service to the UDS Core Environment.
- * @details Registers the internal 0x2F and Timeout handlers to the UDS dispatcher.
- * @param  env Pointer to UDS environment.
- * @param  svc Pointer to IO service context.
- * @return RT_EOK on success.
+ * @brief Mount one IO-control service instance.
+ * @param env UDS environment.
+ * @param svc IO service context.
+ * @return RT_EOK on success, otherwise a negative RT-Thread error code.
  */
 rt_err_t rtt_uds_io_service_mount(rtt_uds_env_t *env, uds_io_service_t *svc);
 
 /**
- * @brief  Unmount the IO Service from the UDS Core.
- * @param  svc Pointer to IO service context.
+ * @brief Unmount one IO-control service instance.
+ * @param svc IO service context.
  */
 void rtt_uds_io_service_unmount(uds_io_service_t *svc);
 
 /**
- * @brief  Check if a specific DID is currently controlled by UDS.
- * @details Helper for application logic to decide whether to update hardware.
- * @param  svc Pointer to IO service context.
- * @param  did The DID to check.
- * @return Status code:
- *         1 : Overridden (UDS has control).
- *         0 : Free (Application has control) or svc is NULL.
- *        -1 : DID not found in the service list.
+ * @brief Query whether a DID is currently overridden by 0x2F control.
+ * @param svc IO service context.
+ * @param did Data identifier.
+ * @return 1 when overridden, 0 when not overridden, -1 when DID is not found.
  */
 int uds_io_is_did_overridden(uds_io_service_t *svc, uint16_t did);
 
@@ -727,23 +728,23 @@ typedef struct
 /* --- Public API --- */
 
 /**
- * @brief  Update the Node ID at runtime.
- * @param  svc     Pointer to service context.
- * @param  node_id New Node ID.
+ * @brief Set the communication-control service node identifier.
+ * @param svc Communication-control service context.
+ * @param node_id Application-defined node identifier.
  */
 void rtt_uds_comm_ctrl_set_id(uds_comm_ctrl_service_t *svc, uint16_t node_id);
 
 /**
- * @brief  Mount the 0x28 Service to the UDS Core.
- * @param  env Pointer to UDS environment.
- * @param  svc Pointer to service context.
- * @return RT_EOK on success.
+ * @brief Mount one communication-control service instance.
+ * @param env UDS environment.
+ * @param svc Communication-control service context.
+ * @return RT_EOK on success, otherwise a negative RT-Thread error code.
  */
 rt_err_t rtt_uds_comm_ctrl_service_mount(rtt_uds_env_t *env, uds_comm_ctrl_service_t *svc);
 
 /**
- * @brief  Unmount the 0x28 Service from the UDS Core.
- * @param  svc Pointer to service context.
+ * @brief Unmount one communication-control service instance.
+ * @param svc Communication-control service context.
  */
 void rtt_uds_comm_ctrl_service_unmount(uds_comm_ctrl_service_t *svc);
 

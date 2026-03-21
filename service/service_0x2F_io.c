@@ -51,9 +51,10 @@ static uds_io_node_t *find_node_by_did(const uds_io_service_t *svc, uint16_t did
  * ========================================================================== */
 
 /**
- * @brief  Dispatcher for IO Control (0x2F) Requests.
- * @details Routes the request to the registered handler for the specific DID.
- *          Updates the override status based on the action.
+ * @brief Dispatch one SID 0x2F request to the DID-specific node handler.
+ * @details The callback result is forwarded directly as an NRC or positive response.
+ *          When the action takes control away from the application, the service also updates
+ *          the per-node override state so timeout cleanup can return control later.
  */
 static UDS_HANDLER(handle_io_control_dispatch)
 {
@@ -107,9 +108,9 @@ static UDS_HANDLER(handle_io_control_dispatch)
 }
 
 /**
- * @brief  Handler for Session Timeout Events.
- * @details Automatically releases control of all overridden DIDs when the 
- *          diagnostic session reverts to Default.
+ * @brief Release all overridden I/O points when the diagnostic session times out.
+ * @details Each overridden node receives a synthetic ReturnControlToECU action so the
+ *          hardware-facing callback can restore ownership before the override flag is cleared.
  */
 static UDS_HANDLER(handle_io_session_timeout)
 {

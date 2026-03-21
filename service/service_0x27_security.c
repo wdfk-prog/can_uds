@@ -23,9 +23,11 @@
  * ========================================================================== */
 
 /**
- * @brief  Generate a pseudo-random seed.
- * @note   For production, use a True Random Number Generator (TRNG) peripheral.
- * @return 32-bit random seed.
+ * @brief Generate one demo seed value for the Seed/Key handshake.
+ * @details The current implementation derives a pseudo-random value from the RT-Thread tick.
+ *          This is sufficient for bring-up and protocol verification, but not for production security.
+ * @note Replace this helper with a TRNG-backed or HSM-backed implementation in production.
+ * @return 32-bit seed value serialized later as big-endian bytes.
  */
 static uint32_t generate_seed(void)
 {
@@ -51,7 +53,13 @@ static uint32_t calculate_key(uint32_t seed, uint32_t mask)
  * ========================================================================== */
 
 /**
- * @brief  Handler for Request Seed (0x27 Subfunction Odd).
+ * @brief Handle the odd-subfunction RequestSeed phase of SID 0x27.
+ * @details The handler validates the configured level, applies the zero-seed rule when
+ *          the requested level is already unlocked, and otherwise generates a fresh seed.
+ * @param srv UDS server instance.
+ * @param data Pointer to UDSSecAccessRequestSeedArgs_t.
+ * @param context Pointer to uds_security_service_t.
+ * @return UDS_PositiveResponse on success, otherwise an NRC.
  */
 static UDS_HANDLER(handle_request_seed)
 {
@@ -99,7 +107,13 @@ static UDS_HANDLER(handle_request_seed)
 }
 
 /**
- * @brief  Handler for Send Key (0x27 Subfunction Even).
+ * @brief Handle the even-subfunction ValidateKey phase of SID 0x27.
+ * @details The handler enforces the seed-then-key sequence, checks the key length,
+ *          derives the expected key from the stored seed, and clears the seed after use.
+ * @param srv UDS server instance.
+ * @param data Pointer to UDSSecAccessValidateKeyArgs_t.
+ * @param context Pointer to uds_security_service_t.
+ * @return UDS_PositiveResponse when the key matches, otherwise an NRC.
  */
 static UDS_HANDLER(handle_validate_key)
 {
@@ -183,6 +197,13 @@ static UDS_HANDLER(handle_sec_session_timeout)
  * Public API Implementation
  * ========================================================================== */
 
+/**
+ * @brief Mount one configured 0x27 security service instance.
+ * @details This binds three internal nodes: request-seed, validate-key, and session-timeout cleanup.
+ * @param env UDS environment.
+ * @param svc Security service context.
+ * @return RT_EOK on success, otherwise a negative RT-Thread error code.
+ */
 rt_err_t rtt_uds_sec_service_mount(rtt_uds_env_t *env, uds_security_service_t *svc)
 {
     rt_err_t ret;
@@ -241,6 +262,10 @@ rt_err_t rtt_uds_sec_service_mount(rtt_uds_env_t *env, uds_security_service_t *s
     return ret;
 }
 
+/**
+ * @brief Unmount one configured 0x27 security service instance.
+ * @param svc Security service context.
+ */
 void rtt_uds_sec_service_unmount(uds_security_service_t *svc)
 {
     if (!svc)

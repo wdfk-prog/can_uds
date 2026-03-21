@@ -1,6 +1,16 @@
 /**
  * @file service_0x36_0x37_0x38_file.c
- * @brief UDS File Transfer Service Implementation (Context-Based).
+ * @brief RT-Thread file-transfer service adapter for UDS download/upload flows.
+ * @details This module binds file-system operations to UDS events related to
+ *          request file transfer, block transfer, and transfer exit. The service
+ *          keeps per-session state such as file descriptor, file mode, progress,
+ *          and CRC32.
+ *
+ * @author wdfk-prog ()
+ * @version 1.0
+ * @date 2026-03-21
+ *
+ * @copyright Copyright (c) 2026
  */
 
 #include "rtt_uds_service.h"
@@ -32,6 +42,13 @@
  * Helper Functions
  * ========================================================================== */
 
+/**
+ * @brief Calculate CRC32 over one data chunk.
+ * @param crc Current CRC accumulator.
+ * @param data Input data buffer.
+ * @param len Number of bytes in @p data.
+ * @return Updated CRC32 value.
+ */
 static uint32_t crc32_calc(uint32_t crc, const uint8_t *data, size_t len)
 {
     crc = ~crc; 
@@ -48,6 +65,16 @@ static uint32_t crc32_calc(uint32_t crc, const uint8_t *data, size_t len)
  * Service Handlers
  * ========================================================================== */
 
+/**
+ * @brief Handle a RequestFileTransfer operation.
+ * @details Opens the target file, negotiates max block length, and initializes
+ *          transfer session state for either read or write mode.
+ *
+ * @param srv UDS server instance.
+ * @param data Pointer to UDSRequestFileTransferArgs_t.
+ * @param context Pointer to uds_file_service_t.
+ * @return UDS_PositiveResponse on success, otherwise a negative response code.
+ */
 static UDS_HANDLER(handle_file_request)
 {
     /* [Key Change] Get context from pointer */
@@ -114,6 +141,16 @@ static UDS_HANDLER(handle_file_request)
     }
 }
 
+/**
+ * @brief Handle one TransferData request/response chunk.
+ * @details Writes incoming data into the open file when downloading to ECU, or
+ *          reads a file chunk and copies it into the UDS response when uploading.
+ *
+ * @param srv UDS server instance.
+ * @param data Pointer to UDSTransferDataArgs_t.
+ * @param context Pointer to uds_file_service_t.
+ * @return UDS_PositiveResponse on success, otherwise a negative response code.
+ */
 static UDS_HANDLER(handle_transfer_data)
 {
     uds_file_service_t *ctx = (uds_file_service_t *)context;
@@ -156,6 +193,16 @@ static UDS_HANDLER(handle_transfer_data)
     return UDS_NRC_ConditionsNotCorrect;
 }
 
+/**
+ * @brief Finalize a file-transfer session.
+ * @details For write mode, validates the client-provided CRC and removes partial
+ *          files on mismatch. For read mode, returns the computed CRC32.
+ *
+ * @param srv UDS server instance.
+ * @param data Pointer to UDSRequestTransferExitArgs_t.
+ * @param context Pointer to uds_file_service_t.
+ * @return UDS_PositiveResponse on success, otherwise a negative response code.
+ */
 static UDS_HANDLER(handle_transfer_exit)
 {
     uds_file_service_t *ctx = (uds_file_service_t *)context;
@@ -203,6 +250,13 @@ static UDS_HANDLER(handle_transfer_exit)
     return UDS_PositiveResponse;
 }
 
+/**
+ * @brief Abort any active file-transfer session on diagnostic-session timeout.
+ * @param srv UDS server instance.
+ * @param data Event-specific data (unused).
+ * @param context Pointer to uds_file_service_t.
+ * @return RTT_UDS_CONTINUE so other timeout handlers can continue.
+ */
 static UDS_HANDLER(handle_session_timeout)
 {
     uds_file_service_t *ctx = (uds_file_service_t *)context;
@@ -219,6 +273,12 @@ static UDS_HANDLER(handle_session_timeout)
  * Public Registration API
  * ========================================================================== */
 
+/**
+ * @brief Mount the file-transfer service into the UDS environment.
+ * @param env UDS environment.
+ * @param svc File service context.
+ * @return RT_EOK on success, otherwise a negative RT-Thread error code.
+ */
 rt_err_t rtt_uds_file_service_mount(rtt_uds_env_t *env, uds_file_service_t *svc)
 {
     if (!env || !svc) return -RT_EINVAL;
@@ -238,6 +298,10 @@ rt_err_t rtt_uds_file_service_mount(rtt_uds_env_t *env, uds_file_service_t *svc)
     return RT_EOK;
 }
 
+/**
+ * @brief Unmount the file-transfer service from the UDS environment.
+ * @param svc File service context.
+ */
 void rtt_uds_file_service_unmount(uds_file_service_t *svc)
 {
     if (!svc) return;
