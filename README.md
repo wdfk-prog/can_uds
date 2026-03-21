@@ -127,16 +127,24 @@ For a guided setup path, see [`docs/en/quick-start.md`](docs/en/quick-start.md).
 
 ---
 
-## 6. Documentation index (English)
+## 6. Documentation
 
-- [`docs/en/architecture.md`](docs/en/architecture.md)
-- [`docs/en/quick-start.md`](docs/en/quick-start.md)
-- [`docs/en/service-guide.md`](docs/en/service-guide.md)
-- [`docs/en/did-design.md`](docs/en/did-design.md)
-- [`docs/en/file-transfer.md`](docs/en/file-transfer.md)
-- [`docs/en/console-service.md`](docs/en/console-service.md)
-- [`docs/en/0x2a-periodic.md`](docs/en/0x2a-periodic.md)
-- [`docs/en/porting-notes.md`](docs/en/porting-notes.md)
+### API Documentation
+
+The complete API reference (HTML) is published through GitHub Pages:
+
+➡️ https://wdfk-prog.space/can_uds/
+
+### Project Docs (English)
+
+- [Architecture](docs/en/architecture.md)
+- [Quick Start](docs/en/quick-start.md)
+- [Service Guide](docs/en/service-guide.md)
+- [DID Design](docs/en/did-design.md)
+- [File Transfer](docs/en/file-transfer.md)
+- [Console Service](docs/en/console-service.md)
+- [0x2A Periodic Service](docs/en/0x2a-periodic.md)
+- [Porting Notes](docs/en/porting-notes.md)
 
 ---
 
