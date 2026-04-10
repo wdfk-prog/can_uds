@@ -74,7 +74,9 @@ can_uds/
 
 本仓库主要提供 **UDS Server（ECU 侧）实现**。
 
-如果你需要一个配套的诊断客户端（Tester），可以参考以下仓库中的 Linux 实现：
+如果你需要一个配套的诊断客户端（Tester），可以参考以下资源：
+
+### 源码示例
 
 👉 https://github.com/wdfk-prog/iso14229/tree/rtt/examples/rtt_server/client_demo
 
@@ -84,7 +86,14 @@ can_uds/
 - 验证各类 UDS 服务（0x10 / 0x22 / 0x31 / 文件传输等）
 - 作为产线或调试工具的基础实现
 
-> 建议：在 bring-up 阶段优先使用该 client_demo 进行协议联调。
+### 已发布客户端程序
+
+如果你希望直接下载已发布的客户端程序，可使用以下 Release 页面：
+
+- Release 页面（Windows 与 x86-64 客户端程序发布地址）：
+  https://github.com/wdfk-prog/iso14229/releases/tag/client_demo-v1.0.0
+
+> 建议：在 bring-up 阶段优先使用该 client_demo 进行协议联调；需要现成二进制时，可直接进入上述 Release 页面获取对应平台版本。
 
 ## 5. 快速接入
 

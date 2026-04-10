@@ -74,7 +74,9 @@ can_uds/
 
 This repository mainly provides a **UDS server (ECU-side)** implementation.
 
-If you need a corresponding diagnostic client (tester), refer to the Linux example below:
+If you need a corresponding diagnostic client (tester), refer to the resources below:
+
+### Source demo
 
 👉 https://github.com/wdfk-prog/iso14229/tree/rtt/examples/rtt_server/client_demo
 
@@ -84,7 +86,14 @@ This demo is based on Linux + SocketCAN / ISO-TP and can be used for:
 - Verifying UDS services (0x10 / 0x22 / 0x31 / file transfer, etc.)
 - Serving as a base for production or debugging tools
 
-> Recommendation: use this client_demo during early bring-up and protocol validation.
+### Published client binaries
+
+If you want a ready-to-use published client package, use this release page:
+
+- Release page for Windows and x86-64 client binaries:
+  https://github.com/wdfk-prog/iso14229/releases/tag/client_demo-v1.0.0
+
+> Recommendation: use this client_demo during early bring-up and protocol validation. If you need a prebuilt binary, go to the release page above and pick the matching platform package.
 
 ## 5. Quick start
 
