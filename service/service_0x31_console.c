@@ -54,6 +54,13 @@ static rt_err_t vcon_open(rt_device_t dev, rt_uint16_t oflag) { (void)dev; (void
  */
 static rt_err_t vcon_close(rt_device_t dev) { (void)dev; return RT_EOK; }
 
+#ifdef UDS_CONSOLE_PASSTHROUGH
+static void vcon_passthrough_write(uds_console_service_t *ctx,
+                                   rt_off_t pos,
+                                   const void *buffer,
+                                   rt_size_t size);
+#endif /* UDS_CONSOLE_PASSTHROUGH */
+
 /**
  * @brief  Virtual Write Implementation.
  * @details Since 'struct rt_device' is the first member of 'uds_console_service_t',
@@ -67,11 +74,8 @@ static rt_ssize_t vcon_write(rt_device_t dev, rt_off_t pos, const void *buffer, 
 
     /* 1. Pass-through to Physical UART */
 #ifdef UDS_CONSOLE_PASSTHROUGH
-    if (ctx->old_console && ctx->old_console->ops->write)
-    {
-        ctx->old_console->ops->write(ctx->old_console, pos, buffer, size);
-    }
-#endif
+    vcon_passthrough_write(ctx, pos, buffer, size);
+#endif /* UDS_CONSOLE_PASSTHROUGH */
 
     /* 2. Capture Logic */
     if (ctx->overflow) return size;
@@ -113,15 +117,67 @@ static rt_ssize_t vcon_write(rt_device_t dev, rt_off_t pos, const void *buffer, 
     return size;
 }
 
+#ifdef UDS_CONSOLE_PASSTHROUGH
 /**
- * @brief Operations table for the virtual console device.
+ * @brief Forward virtual-console output to the saved physical console.
+ * @param ctx Console service context.
+ * @param pos Write offset passed by RT-Thread.
+ * @param buffer Output buffer.
+ * @param size Output length.
  */
-const struct rt_device_ops vcon_ops = {
+static void vcon_passthrough_write(uds_console_service_t *ctx,
+                                   rt_off_t pos,
+                                   const void *buffer,
+                                   rt_size_t size)
+{
+    if (!ctx->old_console)
+    {
+        return;
+    }
+
+#ifdef RT_USING_DEVICE_OPS
+    if (ctx->old_console->ops && ctx->old_console->ops->write)
+    {
+        ctx->old_console->ops->write(ctx->old_console, pos, buffer, size);
+    }
+#else
+    if (ctx->old_console->write)
+    {
+        ctx->old_console->write(ctx->old_console, pos, buffer, size);
+    }
+#endif /* RT_USING_DEVICE_OPS */
+}
+#endif /* UDS_CONSOLE_PASSTHROUGH */
+
+#ifdef RT_USING_DEVICE_OPS
+/**
+ * @brief Operations table for RT-Thread builds using device ops.
+ */
+static const struct rt_device_ops vcon_ops = {
     .init = vcon_init,
     .open = vcon_open,
     .close = vcon_close,
     .write = vcon_write,
 };
+#endif /* RT_USING_DEVICE_OPS */
+
+/**
+ * @brief Bind virtual-console callbacks to an RT-Thread device object.
+ * @param svc Console service context containing the device object.
+ */
+static void vcon_bind_device_callbacks(uds_console_service_t *svc)
+{
+#ifdef RT_USING_DEVICE_OPS
+    svc->dev.ops = &vcon_ops;
+#else
+    svc->dev.init = vcon_init;
+    svc->dev.open = vcon_open;
+    svc->dev.close = vcon_close;
+    svc->dev.read = RT_NULL;
+    svc->dev.write = vcon_write;
+    svc->dev.control = RT_NULL;
+#endif /* RT_USING_DEVICE_OPS */
+}
 
 /* ==========================================================================
  * Console Switching Helpers
@@ -276,7 +332,7 @@ rt_err_t rtt_uds_console_service_mount(rtt_uds_env_t *env, uds_console_service_t
     /* 1. Register Virtual Device to RT-Thread */
     /* Init device structure */
     svc->dev.type = RT_Device_Class_Char;
-    svc->dev.ops  = &vcon_ops;
+    vcon_bind_device_callbacks(svc);
     /* user_data point to self (though we cast 'dev' pointer, this is good practice) */
     svc->dev.user_data = svc; 
 
