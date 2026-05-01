@@ -5,6 +5,23 @@ on:
   pull_request:
     branches: ["master"]
   workflow_dispatch:
+    inputs:
+      rtthread_ref:
+        description: "RT-Thread branch, tag, or commit to build against"
+        required: false
+        default: "master"
+      rtthread_env_ref:
+        description: "RT-Thread Env branch, tag, or commit to use"
+        required: false
+        default: "master"
+      bsp:
+        description: "RT-Thread BSP path below bsp/"
+        required: false
+        default: "stm32/stm32f407-atk-explorer"
+      stm32_series_lc:
+        description: "STM32 HAL/CMSIS header prefix for the selected BSP"
+        required: false
+        default: "stm32f4"
 
 permissions:
   contents: read
@@ -13,15 +30,26 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  RTTHREAD_REF: ${{ github.event.inputs.rtthread_ref || 'master' }}
+  RTTHREAD_ENV_REF: ${{ github.event.inputs.rtthread_env_ref || 'master' }}
+  RTT_BSP: ${{ github.event.inputs.bsp || 'stm32/stm32f407-atk-explorer' }}
+  STM32_SERIES_LC: ${{ github.event.inputs.stm32_series_lc || 'stm32f4' }}
+  PACKAGE_NAME: can_uds
+  ARM_TOOLCHAIN_URL: https://developer.arm.com/-/media/Files/downloads/gnu/15.2.rel1/binrel/arm-gnu-toolchain-15.2.rel1-x86_64-arm-none-eabi.tar.xz
+  ARM_TOOLCHAIN_DIR: /opt/arm-gnu-toolchain-15.2.rel1-x86_64-arm-none-eabi
+
 jobs:
   cppcheck-report:
     name: Static analysis report
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     continue-on-error: true
 
     steps:
-      - name: checkout
-        uses: actions/checkout@v6
+      - name: Checkout can_uds
+        uses: actions/checkout@v4
+        with:
+          path: can_uds-src
 
       - name: Install cppcheck
         run: |
@@ -30,6 +58,7 @@ jobs:
 
       - name: Run cppcheck (report + log)
         shell: bash
+        working-directory: can_uds-src
         run: |
           cppcheck \
             --enable=warning,style,performance,portability \
@@ -41,7 +70,7 @@ jobs:
             --suppress=missingIncludeSystem \
             -I. \
             -Iservice \
-            examples service iso14229_rtt.c \
+            examples service iso14229.c iso14229_rtt.c \
             2> >(tee cppcheck.txt >&2)
 
       - name: Upload cppcheck report
@@ -49,73 +78,410 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: cppcheck-report
-          path: cppcheck.txt
+          path: can_uds-src/cppcheck.txt
+          if-no-files-found: error
 
-  build-rtt-qemu:
-    name: Build RT-Thread QEMU
+  build-rtt-stm32-can:
+    name: Build RT-Thread STM32 CAN BSP
     runs-on: ubuntu-22.04
 
     steps:
-      - name: checkout can_uds
-        uses: actions/checkout@v6
-
-      - name: Install host tools
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y scons git wget python3-pip libncurses5-dev
-          python3 -m pip install --upgrade pip
-          python3 -m pip install kconfiglib requests
-
-      - name: Install Arm GNU Toolchain 15.2.Rel1
-        run: |
-          wget -q https://developer.arm.com/-/media/Files/downloads/gnu/15.2.rel1/binrel/arm-gnu-toolchain-15.2.rel1-x86_64-arm-none-eabi.tar.xz -O /tmp/arm-gnu-toolchain.tar.xz
-          sudo tar xJf /tmp/arm-gnu-toolchain.tar.xz -C /opt
-          /opt/arm-gnu-toolchain-15.2.rel1-x86_64-arm-none-eabi/bin/arm-none-eabi-gcc -v
+      - name: Checkout can_uds
+        uses: actions/checkout@v4
+        with:
+          path: can_uds-src
 
       - name: Checkout RT-Thread
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
         with:
           repository: RT-Thread/rt-thread
-          ref: master
+          ref: ${{ env.RTTHREAD_REF }}
           path: rt-thread
 
-      - name: Prepare RT-Thread config
+      - name: Checkout RT-Thread Env
+        uses: actions/checkout@v4
+        with:
+          repository: RT-Thread/env
+          ref: ${{ env.RTTHREAD_ENV_REF }}
+          path: env
+
+      - name: Install host tools
         shell: bash
         run: |
-          export RTT_CC=gcc
-          export RTT_EXEC_PATH=/opt/arm-gnu-toolchain-15.2.rel1-x86_64-arm-none-eabi/bin
-          export RTT_ROOT=${{ github.workspace }}/rt-thread
+          sudo apt-get update
+          sudo apt-get install -y git wget xz-utils rsync python3-pip libncurses5-dev
+          python3 -m pip install --user --upgrade pip
+          python3 -m pip install --user scons kconfiglib tqdm requests
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
-          BSP_PATH=$RTT_ROOT/bsp/qemu-vexpress-a9
-          USER_SCONSCRIPT=${{ github.workspace }}/SConscript
+      - name: Install Arm GNU Toolchain
+        shell: bash
+        run: |
+          if [ ! -x "$ARM_TOOLCHAIN_DIR/bin/arm-none-eabi-gcc" ]; then
+            wget -q "$ARM_TOOLCHAIN_URL" -O /tmp/arm-gnu-toolchain.tar.xz
+            sudo tar xJf /tmp/arm-gnu-toolchain.tar.xz -C /opt
+          fi
+          "$ARM_TOOLCHAIN_DIR/bin/arm-none-eabi-gcc" --version
+
+      - name: Prepare RT-Thread CAN BSP
+        shell: bash
+        run: |
+          set -o pipefail
+
+          export RTT_ROOT="$GITHUB_WORKSPACE/rt-thread"
+          export RTT_ENV="$GITHUB_WORKSPACE/env"
+          export RTT_CC=gcc
+          export RTT_EXEC_PATH="$ARM_TOOLCHAIN_DIR/bin"
+          export PATH="$HOME/.local/bin:$RTT_ENV:$RTT_EXEC_PATH:$PATH"
+
+          log_file="$GITHUB_WORKSPACE/build-stm32-can.log"
+          : > "$log_file"
+
+          BSP_PATH="$RTT_ROOT/bsp/$RTT_BSP"
+          SRC_PATH="$GITHUB_WORKSPACE/can_uds-src"
+          PKG_PATH="$BSP_PATH/packages/$PACKAGE_NAME"
+
+          test -f "$RTT_ENV/env.py" || {
+            echo "RT-Thread Env entry not found: $RTT_ENV/env.py" >&2
+            find "$RTT_ENV" -maxdepth 3 -type f \( -name env.py -o -name pkgs \) >&2 || true
+            exit 1
+          }
+
+          test -d "$BSP_PATH" || {
+            echo "BSP path does not exist: $BSP_PATH" >&2
+            find "$RTT_ROOT/bsp" -maxdepth 3 -type d | sort >&2
+            exit 1
+          }
+
+          test -f "$BSP_PATH/SConstruct" || {
+            echo "Selected BSP has no SConstruct: $BSP_PATH" >&2
+            exit 1
+          }
+
+          if ! grep -R "BSP_USING_CAN" -n "$BSP_PATH" "$RTT_ROOT/bsp/stm32/libraries" >/dev/null; then
+            echo "Selected BSP tree does not expose BSP_USING_CAN; choose a CAN-capable BSP." >&2
+            exit 1
+          fi
+
+          if ! find "$RTT_ROOT/bsp/stm32/libraries" -type f -name 'drv_can.c' -print -quit | grep -q .; then
+            echo "STM32 HAL CAN driver source drv_can.c was not found." >&2
+            exit 1
+          fi
 
           cd "$BSP_PATH"
 
-          sed -i "/DoBuilding/i objs += SConscript('$USER_SCONSCRIPT')" SConstruct
+          scons --pyconfig-silent 2>&1 | tee -a "$log_file"
+          python3 "$RTT_ENV/env.py" package --upgrade 2>&1 | tee -a "$log_file"
+          python3 "$RTT_ENV/env.py" package --update 2>&1 | tee -a "$log_file"
 
-          scons --pyconfig-silent
+          for header in "${STM32_SERIES_LC}xx.h" "${STM32_SERIES_LC}xx_hal.h"; do
+            if ! find packages -type f -name "$header" -print -quit | grep -q .; then
+              echo "Required STM32 package header was not fetched: $header" >&2
+              grep -E '^(PKG_USING_|SOC_SERIES_)' .config rtconfig.h >&2 || true
+              exit 1
+            fi
+          done
 
-          # Disable POSIX termios in CI to avoid pulling host-side termios
-          # symbols (speed_t, B115200, etc.) into RT-Thread serial build.
-          if [ -f .config ]; then
-            sed -i 's/^RT_USING_POSIX_TERMIOS=y$/# RT_USING_POSIX_TERMIOS is not set/' .config || true
+          HAL_CONF="board/CubeMX_Config/Inc/${STM32_SERIES_LC}xx_hal_conf.h"
+          test -f "$HAL_CONF" || {
+            echo "STM32 HAL config file was not found: $HAL_CONF" >&2
+            find board -type f -name '*_hal_conf.h' -print >&2 || true
+            exit 1
+          }
+
+          HAL_CONF="$HAL_CONF" python3 - <<'HALCONFPY'
+          import os
+          import re
+          from pathlib import Path
+
+          hal_conf = Path(os.environ["HAL_CONF"])
+          text = hal_conf.read_text(encoding="utf-8", errors="ignore")
+          if not re.search(r"^\s*#define\s+HAL_CAN_MODULE_ENABLED\b", text, re.MULTILINE):
+              anchor = re.search(r"^\s*#define\s+HAL_MODULE_ENABLED\b.*$", text, re.MULTILINE)
+              if anchor:
+                  insert_at = anchor.end()
+                  text = text[:insert_at] + "\n#define HAL_CAN_MODULE_ENABLED" + text[insert_at:]
+              else:
+                  text = "#define HAL_CAN_MODULE_ENABLED\n" + text
+              hal_conf.write_text(text, encoding="utf-8")
+          HALCONFPY
+          grep -E '^#define[[:space:]]+HAL_CAN_MODULE_ENABLED$' "$HAL_CONF"
+
+          mkdir -p "$PKG_PATH"
+          rsync -a --delete \
+            --exclude='.git' \
+            --exclude='.github' \
+            --exclude='Doxyfile' \
+            --exclude='docs' \
+            "$SRC_PATH/" "$PKG_PATH/"
+          test -f "$PKG_PATH/SConscript" || {
+            echo "Package SConscript was not staged: $PKG_PATH/SConscript" >&2
+            exit 1
+          }
+
+
+          # The parameter service is an integration example and depends on a
+          # project-specific parameter manager. Generate minimal CI-only stubs
+          # in the staged package so UDS_ENABLE_PARAM_SVC can be compile-tested
+          # without changing production sources.
+          if [ ! -f "$PKG_PATH/service/parameter_manager.h" ]; then
+            cat > "$PKG_PATH/service/parameter_manager.h" <<'EOF_PARAM_MANAGER'
+          #ifndef CI_UDS_PARAMETER_MANAGER_H__
+          #define CI_UDS_PARAMETER_MANAGER_H__
+          
+          #include <stdint.h>
+          
+          typedef uint32_t U32;
+          typedef int BO;
+          typedef enum {
+              RC_SUCCESS = 0,
+              RC_ERROR_RANGE,
+              RC_ERROR_OPEN,
+              RC_ERROR_READ_FAILS,
+              RC_ERROR_INVALID,
+              RC_ERROR_FILE_ACCESS,
+              RC_ERROR
+          } RC;
+          
+          #ifndef TRUE
+          #define TRUE 1
+          #endif
+          
+          struct paragen_object {
+              U32 ci_dummy;
+          };
+          
+          static inline RC parameter_get(struct paragen_object const * const obj,
+                                         U32 index,
+                                         void *data,
+                                         U32 *data_len,
+                                         U32 readlevel)
+          {
+              (void)obj;
+              (void)index;
+              (void)data;
+              (void)readlevel;
+              if (data_len) {
+                  *data_len = 0;
+              }
+              return RC_ERROR_RANGE;
+          }
+          
+          static inline RC parameter_set(struct paragen_object const * const obj,
+                                         U32 index,
+                                         void *data,
+                                         U32 size,
+                                         BO if_write_eeprom)
+          {
+              (void)obj;
+              (void)index;
+              (void)data;
+              (void)size;
+              (void)if_write_eeprom;
+              return RC_ERROR_RANGE;
+          }
+          
+          #endif /* CI_UDS_PARAMETER_MANAGER_H__ */
+          EOF_PARAM_MANAGER
           fi
-          if [ -f rtconfig.h ]; then
-            sed -i '/^#define[[:space:]]\+RT_USING_POSIX_TERMIOS$/d' rtconfig.h || true
+
+          if [ ! -f "$PKG_PATH/service/general.h" ]; then
+            cat > "$PKG_PATH/service/general.h" <<'EOF_GENERAL'
+          #ifndef CI_UDS_GENERAL_H__
+          #define CI_UDS_GENERAL_H__
+          
+          #include "parameter_manager.h"
+          
+          static const struct paragen_object general_obj = { 0 };
+          
+          #endif /* CI_UDS_GENERAL_H__ */
+          EOF_GENERAL
           fi
 
-          cat >> rtconfig.h <<'EOF'
+          if [ ! -f "$PKG_PATH/service/general_extend.h" ]; then
+            cat > "$PKG_PATH/service/general_extend.h" <<'EOF_GENERAL_EXTEND'
+          #ifndef CI_UDS_GENERAL_EXTEND_H__
+          #define CI_UDS_GENERAL_EXTEND_H__
+          
+          #include "parameter_manager.h"
+          
+          static const struct paragen_object general_extend_obj = { 0 };
+          
+          #endif /* CI_UDS_GENERAL_EXTEND_H__ */
+          EOF_GENERAL_EXTEND
+          fi
+
+          if [ ! -f "$PKG_PATH/service/common_macro.h" ]; then
+            cat > "$PKG_PATH/service/common_macro.h" <<'EOF_COMMON_MACRO'
+          #ifndef CI_UDS_COMMON_MACRO_H__
+          #define CI_UDS_COMMON_MACRO_H__
+          #endif /* CI_UDS_COMMON_MACRO_H__ */
+          EOF_COMMON_MACRO
+          fi
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          sconstruct = Path("SConstruct")
+          text = sconstruct.read_text(encoding="utf-8")
+          stale_line = "objs += SConscript('packages/can_uds/SConscript')\n"
+          if stale_line in text:
+              text = text.replace(stale_line, "")
+              sconstruct.write_text(text, encoding="utf-8")
+          PY
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          rtconfig = Path("rtconfig.py")
+          text = rtconfig.read_text(encoding="utf-8")
+          marker = "# --- CI can_uds extra flags ---"
+          extra = """
+          # --- CI can_uds extra flags ---
+          CFLAGS += ' -std=gnu11 -include assert.h -Dstatic_assert=_Static_assert -DUDS_SYS=5 -Drt_vprintf=vprintf'
+          CFLAGS += ' -Wno-error=implicit-function-declaration -Wno-error=unused-variable'
+          # --- end CI can_uds extra flags ---
+          """
+          if marker not in text:
+              text += extra
+          rtconfig.write_text(text, encoding="utf-8")
+          PY
+
+          cp rtconfig.h "$GITHUB_WORKSPACE/rtconfig.base.h"
+          cp .config "$GITHUB_WORKSPACE/config.base"
+
+      - name: Build and verify CAN/UDS objects
+        shell: bash
+        run: |
+          set -o pipefail
+
+          export RTT_ROOT="$GITHUB_WORKSPACE/rt-thread"
+          export RTT_ENV="$GITHUB_WORKSPACE/env"
+          export RTT_CC=gcc
+          export RTT_EXEC_PATH="$ARM_TOOLCHAIN_DIR/bin"
+          export PATH="$HOME/.local/bin:$RTT_ENV:$RTT_EXEC_PATH:$PATH"
+
+          BSP_PATH="$RTT_ROOT/bsp/$RTT_BSP"
+          cd "$BSP_PATH"
+
+          apply_common_profile() {
+            python3 - <<'PY'
+          from pathlib import Path
+
+          exact_macros = {
+              "PKG_USING_CAN_UDS",
+              "PKG_USING_CAN_UDS_V100",
+              "PKG_USING_ISO14229",
+              "RT_USING_CAN",
+              "BSP_USING_CAN",
+              "BSP_USING_CAN1",
+              "RT_USING_FILTER",
+              "RT_USING_PIN",
+              "RT_USING_ULOG",
+              "RT_USING_DEVICE_OPS",
+              "UDS_LOG_LEVEL",
+              "UDS_RTT_EVENT_TABLE_SIZE",
+              "UDS_ENABLE_SESSION_SVC",
+              "UDS_P2_MS_STD",
+              "UDS_P2_STAR_MS_STD",
+              "UDS_P2_MS_EXT",
+              "UDS_P2_STAR_MS_EXT",
+              "UDS_ENABLE_SECURITY_SVC",
+              "UDS_SEC_DEFAULT_LEVEL",
+              "UDS_SEC_DEFAULT_KEY",
+              "UDS_ENABLE_0X28_COMM_CTRL_SVC",
+              "UDS_COMM_CTRL_ID",
+              "UDS_ENABLE_0X2A_PERIODIC_SVC",
+              "UDS_SERVER_0X2A_SLOW_PERIOD_MS",
+              "UDS_SERVER_0X2A_MEDIUM_PERIOD_MS",
+              "UDS_SERVER_0X2A_FAST_PERIOD_MS",
+              "UDS_0X2A_MAX_ACTIVE_PDID",
+              "UDS_ENABLE_0X2F_IO_SVC",
+              "UDS_ENABLE_0X11_RESET_SVC",
+              "UDS_RESET_DELAY_MS",
+              "UDS_ENABLE_CONSOLE_SVC",
+              "UDS_CONSOLE_BUF_SIZE",
+              "UDS_CONSOLE_CMD_BUF_SIZE",
+              "UDS_CONSOLE_DEV_NAME",
+              "UDS_CONSOLE_PASSTHROUGH",
+              "UDS_ENABLE_FILE_SVC",
+              "UDS_FILE_CHUNK_SIZE",
+              "UDS_FILE_MAX_PATH_LEN",
+              "UDS_ENABLE_PARAM_SVC",
+              "UDS_PARAM_RDBI_BUF_SIZE",
+              "RT_USING_FINSH",
+              "FINSH_USING_MSH",
+              "RT_USING_DFS",
+              "DFS_USING_POSIX",
+              "UDS_USING_EXAMPLE",
+              "UDS_EXAMPLE_START_MODE_USER_CALL",
+              "UDS_EXAMPLE_START_MODE_APP_INIT",
+              "UDS_EXAMPLE_LED_CTRL_DID",
+              "UDS_EXAMPLE_PIN_LED_R",
+              "UDS_EXAMPLE_PIN_LED_G",
+              "UDS_EXAMPLE_PIN_LED_B",
+              "UDS_EXAMPLE_0X2A_ULOG",
+              "UDS_0X2A_ULOG_EXAMPLE_PDID",
+              "UDS_0X2A_ULOG_EXAMPLE_RINGBUF_SIZE",
+              "UDS_EXAMPLE_0X2A_ULOG_EXAMPLE_IGNORE_TAG",
+          }
+          prefix_macros = (
+              "RT_USING_POSIX_",
+              "RT_USING_SAL",
+              "RT_USING_NETDEV",
+              "RT_USING_LWIP",
+              "RT_LWIP_",
+              "LWIP_",
+          )
+
+          def is_removed_define(line):
+              stripped = line.strip()
+              if not stripped.startswith("#define "):
+                  return False
+              parts = stripped.split(None, 2)
+              if len(parts) < 2:
+                  return False
+              name = parts[1]
+              return name in exact_macros or any(name.startswith(prefix) for prefix in prefix_macros)
+
+          def is_removed_config(line):
+              stripped = line.strip()
+              if stripped.startswith("CONFIG_"):
+                  name = stripped.split("=", 1)[0][7:]
+                  return name in exact_macros or any(name.startswith(prefix) for prefix in prefix_macros)
+              if stripped.startswith("# CONFIG_") and stripped.endswith(" is not set"):
+                  name = stripped[len("# CONFIG_"):-len(" is not set")]
+                  return name in exact_macros or any(name.startswith(prefix) for prefix in prefix_macros)
+              return False
+
+          for path in (Path("rtconfig.h"), Path(".config")):
+              if not path.exists():
+                  continue
+              lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
+              if path.name == "rtconfig.h":
+                  lines = [line for line in lines if not is_removed_define(line)]
+              else:
+                  lines = [line for line in lines if not is_removed_config(line)]
+              path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+          PY
+
+            cat >> rtconfig.h <<'EOF_RTCONFIG'
+
+          /* CI can_uds compile profile: real STM32 CAN framework + CAN1 driver. */
           #define PKG_USING_CAN_UDS
+          #define PKG_USING_CAN_UDS_V100
+          #define PKG_USING_ISO14229
 
-          /* Logging Configuration */
+          #define RT_USING_CAN
+          #define BSP_USING_CAN
+          #define BSP_USING_CAN1
+          #define RT_USING_FILTER
+          #define RT_USING_PIN
+          #define RT_USING_ULOG
+
           #define UDS_LOG_LEVEL 4
-          #define UDS_RTTHREAD_ULOG_ENABLED
-          /* end of Logging Configuration */
-
-          /* UDS Server Configuration */
           #define UDS_RTT_EVENT_TABLE_SIZE 32
 
-          /* Enabled Services */
           #define UDS_ENABLE_SESSION_SVC
           #define UDS_P2_MS_STD 50
           #define UDS_P2_STAR_MS_STD 2000
@@ -124,6 +490,8 @@ jobs:
           #define UDS_ENABLE_SECURITY_SVC
           #define UDS_SEC_DEFAULT_LEVEL 0x01
           #define UDS_SEC_DEFAULT_KEY 0xA5A5A5A5
+          #define UDS_ENABLE_0X11_RESET_SVC
+          #define UDS_RESET_DELAY_MS 50
           #define UDS_ENABLE_0X28_COMM_CTRL_SVC
           #define UDS_COMM_CTRL_ID 512
           #define UDS_ENABLE_0X2A_PERIODIC_SVC
@@ -131,16 +499,25 @@ jobs:
           #define UDS_SERVER_0X2A_MEDIUM_PERIOD_MS 200
           #define UDS_SERVER_0X2A_FAST_PERIOD_MS 50
           #define UDS_0X2A_MAX_ACTIVE_PDID 8
+          #define UDS_ENABLE_0X2F_IO_SVC
+          #define UDS_ENABLE_CONSOLE_SVC
+          #define UDS_CONSOLE_BUF_SIZE 1024
+          #define UDS_CONSOLE_CMD_BUF_SIZE 128
+          #define UDS_CONSOLE_DEV_NAME "uds_vcon"
+          #define UDS_CONSOLE_PASSTHROUGH
           #define UDS_ENABLE_FILE_SVC
-          #define UDS_FILE_CHUNK_SIZE 4093
+          #define UDS_FILE_CHUNK_SIZE 256
           #define UDS_FILE_MAX_PATH_LEN 64
-          /* end of Enabled Services */
-          /* end of UDS Server Configuration */
+          #define UDS_ENABLE_PARAM_SVC
+          #define UDS_PARAM_RDBI_BUF_SIZE 64
+
+          #define RT_USING_FINSH
+          #define FINSH_USING_MSH
+          #define RT_USING_DFS
+          #define DFS_USING_POSIX
 
           #define UDS_USING_EXAMPLE
-
-          /* Example Configuration */
-          #define UDS_EXAMPLE_START_MODE_USER_CALL
+          #define UDS_EXAMPLE_START_MODE_APP_INIT
           #define UDS_EXAMPLE_LED_CTRL_DID 0x0100
           #define UDS_EXAMPLE_PIN_LED_R -1
           #define UDS_EXAMPLE_PIN_LED_G -1
@@ -149,49 +526,115 @@ jobs:
           #define UDS_0X2A_ULOG_EXAMPLE_PDID 0xA1
           #define UDS_0X2A_ULOG_EXAMPLE_RINGBUF_SIZE 1024
           #define UDS_EXAMPLE_0X2A_ULOG_EXAMPLE_IGNORE_TAG "uds.console"
-          /* end of Example Configuration */
+          EOF_RTCONFIG
+          }
 
-          #define PKG_USING_ISO14229
-          #define PKG_USING_CAN_UDS_V100
+          verify_profile() {
+            profile="$1"
+            log_file="$GITHUB_WORKSPACE/build-${profile}.log"
+            artifact_dir="$GITHUB_WORKSPACE/rtt-can-artifacts/${profile}"
+            mkdir -p "$artifact_dir"
+            : > "$log_file"
 
-          #define RT_USING_CAN
-          #define BSP_USING_CAN
-          #define RT_USING_FILTER
-          #define RT_USING_ULOG
-          EOF
+            echo "==> Building profile: $profile" | tee -a "$log_file"
+            rm -rf build rt-thread.elf rtthread.elf rtthread.bin rt-thread.bin rt-thread.map
+            scons -j"$(nproc)" 2>&1 | tee -a "$log_file"
 
-          python3 - <<'PY'
-          from pathlib import Path
+            can_obj="$(find "$RTT_ROOT" -type f -name 'drv_can.o' -print -quit)"
+            test -n "$can_obj" || {
+              echo "CAN driver object was not found after build; dumping CAN-related build outputs." >&2
+              find "$RTT_ROOT" -type f \
+                \( -name '*drv_can*' -o -name '*hal_can*' -o -name '*dev_can*' \) \
+                -print | sort >&2 || true
+              exit 1
+            }
+            echo "CAN driver object: $can_obj" | tee -a "$log_file"
 
-          p = Path("rtconfig.py")
-          txt = p.read_text(encoding="utf-8")
+            elf_file="$(find . -maxdepth 2 -type f \( -name 'rt-thread.elf' -o -name 'rtthread.elf' -o -name '*.elf' \) -print -quit)"
+            test -n "$elf_file" || {
+              echo "No RT-Thread ELF output was produced." >&2
+              find . -maxdepth 2 -type f | sort >&2
+              exit 1
+            }
 
-          txt = txt.replace("-std=gnu99", "-std=gnu11")
+            pkg_obj_dir="$BSP_PATH/build/packages/$PACKAGE_NAME"
+            test -d "$pkg_obj_dir" || {
+              echo "Package object directory was not produced: $pkg_obj_dir" >&2
+              find "$BSP_PATH/build" -maxdepth 4 -type d | sort >&2 || true
+              exit 1
+            }
 
-          marker = "# --- CI extra flags ---"
-          extra = '''
-          # --- CI extra flags ---
-          CFLAGS += ' -include assert.h -Dstatic_assert=_Static_assert -Drt_vprintf=vprintf -Wno-error=implicit-function-declaration -Wno-error=unused-variable'
-          # --- end CI extra flags ---
-          '''
-          if marker not in txt:
-              txt += extra
+            find "$pkg_obj_dir" -type f -name '*.o' -print | sort > "$artifact_dir/can-uds-objects.txt"
+            test -s "$artifact_dir/can-uds-objects.txt" || {
+              echo "No can_uds object files were produced under: $pkg_obj_dir" >&2
+              exit 1
+            }
 
-          p.write_text(txt, encoding="utf-8")
-          print("patched", p)
-          PY
+            xargs "$RTT_EXEC_PATH/arm-none-eabi-nm" < "$artifact_dir/can-uds-objects.txt" \
+              > "$artifact_dir/can-uds-nm.txt"
+            for symbol in \
+              rtt_uds_create \
+              rtt_uds_feed_can_frame \
+              uds_example_start \
+              uds_example_app_init \
+              uds_list \
+              rtt_uds_console_service_mount \
+              rtt_uds_file_service_mount \
+              param_rdbi_node_register \
+              param_wdbi_node_register \
+              reset_req_node_register \
+              reset_exec_node_register; do
+              if ! grep -E "[[:space:]][Tt][[:space:]]+$symbol$" "$artifact_dir/can-uds-nm.txt" >/dev/null; then
+                echo "Expected can_uds object symbol was not found: $symbol" >&2
+                grep -E 'rtt_uds_|uds_|param_|reset_' "$artifact_dir/can-uds-nm.txt" >&2 || true
+                exit 1
+              fi
+            done
 
-      - name: Build and verify symbols
-        shell: bash
-        run: |
-          export RTT_CC=gcc
-          export RTT_EXEC_PATH=/opt/arm-gnu-toolchain-15.2.rel1-x86_64-arm-none-eabi/bin
-          export RTT_ROOT=${{ github.workspace }}/rt-thread
+            cp "$log_file" "$artifact_dir/"
+            cp "$elf_file" "$artifact_dir/"
+            find . -maxdepth 1 -type f \( -name '*.bin' -o -name '*.map' \) -exec cp {} "$artifact_dir/" \;
+            find "$artifact_dir" -maxdepth 1 -type f -print | sort
+          }
 
-          BSP_PATH=$RTT_ROOT/bsp/qemu-vexpress-a9
-          cd "$BSP_PATH"
+          for device_ops in off on; do
+            cp "$GITHUB_WORKSPACE/rtconfig.base.h" rtconfig.h
+            cp "$GITHUB_WORKSPACE/config.base" .config
+            apply_common_profile
+            if [ "$device_ops" = "on" ]; then
+              cat >> rtconfig.h <<'EOF_DEVICE_OPS'
+          #define RT_USING_DEVICE_OPS
+          EOF_DEVICE_OPS
+            fi
 
-          scons -j"$(nproc)"
+            echo "==> Effective macros for device_ops_${device_ops}:"
+            grep -E '^#define[[:space:]]+RT_USING_CAN$' rtconfig.h
+            grep -E '^#define[[:space:]]+BSP_USING_CAN$' rtconfig.h
+            grep -E '^#define[[:space:]]+BSP_USING_CAN1$' rtconfig.h
+            grep -E '^#define[[:space:]]+(UDS_ENABLE_CONSOLE_SVC|UDS_CONSOLE_PASSTHROUGH|UDS_ENABLE_FILE_SVC|UDS_ENABLE_PARAM_SVC|UDS_ENABLE_0X11_RESET_SVC)$' rtconfig.h
+            grep -E '^#define[[:space:]]+(UDS_EXAMPLE_START_MODE_APP_INIT|RT_USING_FINSH|FINSH_USING_MSH)$' rtconfig.h
+            if [ "$device_ops" = "on" ]; then
+              grep -E '^#define[[:space:]]+RT_USING_DEVICE_OPS$' rtconfig.h
+            elif grep -E '^#define[[:space:]]+RT_USING_DEVICE_OPS$' rtconfig.h; then
+              echo "RT_USING_DEVICE_OPS leaked into device_ops_off profile" >&2
+              exit 1
+            fi
 
-          /opt/arm-gnu-toolchain-15.2.rel1-x86_64-arm-none-eabi/bin/arm-none-eabi-nm rtthread.elf | \
-            grep -E "rtt_uds_create|rtt_uds_feed_can_frame|uds_example_start"
+            verify_profile "device_ops_${device_ops}"
+          done
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rtt-stm32-can-build-log
+          path: build-*.log
+          if-no-files-found: warn
+
+      - name: Upload RT-Thread build artifacts
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rtt-stm32-can-artifacts
+          path: rtt-can-artifacts/**/*
+          if-no-files-found: error
