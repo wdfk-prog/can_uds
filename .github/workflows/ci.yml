@@ -79,6 +79,13 @@ jobs:
           ref: master
           path: rt-thread
 
+      - name: Checkout parameters
+        uses: actions/checkout@v6
+        with:
+          repository: wdfk-prog/parameters
+          ref: master
+          path: parameters-src
+
       - name: Prepare RT-Thread config
         shell: bash
         run: |
@@ -88,9 +95,28 @@ jobs:
 
           BSP_PATH=$RTT_ROOT/bsp/qemu-vexpress-a9
           USER_SCONSCRIPT=${{ github.workspace }}/SConscript
+          PARAM_SRC_PATH=${{ github.workspace }}/parameters-src
+          PARAM_PKG_PATH=$BSP_PATH/packages/autogen_parameter_manager-latest
+          PARAM_SCONSCRIPT=$PARAM_PKG_PATH/SConscript
+          export CI_AUTOGEN_PM_PATH=$PARAM_PKG_PATH
+
+          rm -rf "$PARAM_PKG_PATH"
+          mkdir -p "$PARAM_PKG_PATH"
+          cp -a "$PARAM_SRC_PATH"/. "$PARAM_PKG_PATH"/
+          rm -rf "$PARAM_PKG_PATH/.git" "$PARAM_PKG_PATH/.github"
+
+          test -f "$PARAM_SCONSCRIPT" || {
+            echo "Parameter package SConscript was not staged: $PARAM_SCONSCRIPT" >&2
+            exit 1
+          }
+          test -f "$PARAM_PKG_PATH/parameters/include/par.h" || {
+            echo "Parameter package public header was not staged: $PARAM_PKG_PATH/parameters/include/par.h" >&2
+            exit 1
+          }
 
           cd "$BSP_PATH"
 
+          sed -i "/DoBuilding/i objs += SConscript('$PARAM_SCONSCRIPT')" SConstruct
           sed -i "/DoBuilding/i objs += SConscript('$USER_SCONSCRIPT')" SConstruct
 
           scons --pyconfig-silent
@@ -106,6 +132,38 @@ jobs:
 
           cat >> rtconfig.h <<'EOF'
           #define PKG_USING_CAN_UDS
+          #define PKG_USING_AUTOGEN_PARAMETER_MANAGER
+
+          /* autogen_parameter_manager Configuration */
+          #define AUTOGEN_PM_USING_MUTEX
+          #define AUTOGEN_PM_MUTEX_TIMEOUT_MS 10
+          #define AUTOGEN_PM_ENABLE_RANGE
+          #define AUTOGEN_PM_ENABLE_NAME
+          #define AUTOGEN_PM_ENABLE_UNIT
+          #define AUTOGEN_PM_ENABLE_DESC
+          #define AUTOGEN_PM_ENABLE_DESC_CHECK
+          #define AUTOGEN_PM_ENABLE_ID
+          #define AUTOGEN_PM_ENABLE_RUNTIME_TABLE_CHECK
+          #define AUTOGEN_PM_ENABLE_ACCESS
+          #define AUTOGEN_PM_ENABLE_TYPE_F32
+          #define AUTOGEN_PM_ENABLE_TYPE_OBJECT
+          #define AUTOGEN_PM_ENABLE_TYPE_STR
+          #define AUTOGEN_PM_ENABLE_TYPE_BYTES
+          #define AUTOGEN_PM_ENABLE_TYPE_ARR_U8
+          #define AUTOGEN_PM_ENABLE_TYPE_ARR_U16
+          #define AUTOGEN_PM_ENABLE_TYPE_ARR_U32
+          #define AUTOGEN_PM_ENABLE_RUNTIME_VALIDATION
+          #define AUTOGEN_PM_ENABLE_CHANGE_CALLBACK
+          #define AUTOGEN_PM_ENABLE_RESET_ALL_RAW
+          #define AUTOGEN_PM_USING_ULOG
+          #define AUTOGEN_PM_USING_NVM
+          #define AUTOGEN_PM_USING_TABLE_ID_CHECK
+          #define AUTOGEN_PM_TABLE_ID_SCHEMA_VER 1
+          #define AUTOGEN_PM_NVM_SCALAR
+          #define AUTOGEN_PM_NVM_OBJECT
+          #define AUTOGEN_PM_NVM_OBJECT_STORE_SHARED
+          #define AUTOGEN_PM_NVM_OBJECT_ADDR_AFTER_SCALAR
+          /* end of autogen_parameter_manager Configuration */
 
           /* Logging Configuration */
           #define UDS_LOG_LEVEL 4
@@ -131,6 +189,9 @@ jobs:
           #define UDS_SERVER_0X2A_MEDIUM_PERIOD_MS 200
           #define UDS_SERVER_0X2A_FAST_PERIOD_MS 50
           #define UDS_0X2A_MAX_ACTIVE_PDID 8
+          #define UDS_ENABLE_PARAM_SVC
+          #define UDS_PARAM_BACKEND_AUTOGEN_PM
+          #define UDS_PARAM_RDBI_BUF_SIZE 8
           #define UDS_ENABLE_FILE_SVC
           #define UDS_FILE_CHUNK_SIZE 4093
           #define UDS_FILE_MAX_PATH_LEN 64
@@ -157,21 +218,48 @@ jobs:
           #define RT_USING_CAN
           #define BSP_USING_CAN
           #define RT_USING_FILTER
+          #define RT_USING_MUTEX
           #define RT_USING_ULOG
           EOF
 
           python3 - <<'PY'
           from pathlib import Path
+          import os
 
           p = Path("rtconfig.py")
           txt = p.read_text(encoding="utf-8")
 
           txt = txt.replace("-std=gnu99", "-std=gnu11")
 
+          param_pkg_path = Path(os.environ["CI_AUTOGEN_PM_PATH"])
+          param_include_paths = [
+              param_pkg_path,
+              param_pkg_path / "backend",
+              param_pkg_path / "port",
+              param_pkg_path / "parameters" / "include",
+              param_pkg_path / "parameters" / "src",
+              param_pkg_path / "parameters" / "src" / "def",
+              param_pkg_path / "parameters" / "src" / "detail",
+              param_pkg_path / "parameters" / "src" / "layout",
+              param_pkg_path / "parameters" / "src" / "nvm",
+              param_pkg_path / "parameters" / "src" / "nvm" / "backend",
+              param_pkg_path / "parameters" / "src" / "nvm" / "object",
+              param_pkg_path / "parameters" / "src" / "nvm" / "object" / "addr",
+              param_pkg_path / "parameters" / "src" / "nvm" / "object" / "store",
+              param_pkg_path / "parameters" / "src" / "nvm" / "scalar",
+              param_pkg_path / "parameters" / "src" / "nvm" / "scalar" / "layout",
+              param_pkg_path / "parameters" / "src" / "nvm" / "scalar" / "store",
+              param_pkg_path / "parameters" / "src" / "object",
+              param_pkg_path / "parameters" / "src" / "port",
+              param_pkg_path / "parameters" / "src" / "scalar",
+              param_pkg_path / "parameters" / "generated",
+          ]
+          param_flags = " ".join(f"-I{path}" for path in param_include_paths)
+
           marker = "# --- CI extra flags ---"
-          extra = '''
+          extra = f'''
           # --- CI extra flags ---
-          CFLAGS += ' -include assert.h -Dstatic_assert=_Static_assert -Drt_vprintf=vprintf -Wno-error=implicit-function-declaration -Wno-error=unused-variable'
+          CFLAGS += ' {param_flags} -include assert.h -Dstatic_assert=_Static_assert -Drt_vprintf=vprintf -Wno-error=implicit-function-declaration -Wno-error=unused-variable'
           # --- end CI extra flags ---
           '''
           if marker not in txt:
@@ -191,7 +279,29 @@ jobs:
           BSP_PATH=$RTT_ROOT/bsp/qemu-vexpress-a9
           cd "$BSP_PATH"
 
+          test -f packages/autogen_parameter_manager-latest/parameters/include/par.h
+          grep -Eq '^#define[[:space:]]+PKG_USING_AUTOGEN_PARAMETER_MANAGER$' rtconfig.h
+          grep -Eq '^#define[[:space:]]+AUTOGEN_PM_ENABLE_ID$' rtconfig.h
+          grep -Eq '^#define[[:space:]]+AUTOGEN_PM_USING_NVM$' rtconfig.h
+          grep -Eq '^#define[[:space:]]+AUTOGEN_PM_NVM_SCALAR$' rtconfig.h
+          grep -Eq '^#define[[:space:]]+AUTOGEN_PM_NVM_OBJECT$' rtconfig.h
+          grep -Eq '^#define[[:space:]]+UDS_ENABLE_PARAM_SVC$' rtconfig.h
+
           scons -j"$(nproc)"
 
-          /opt/arm-gnu-toolchain-15.2.rel1-x86_64-arm-none-eabi/bin/arm-none-eabi-nm rtthread.elf | \
-            grep -E "rtt_uds_create|rtt_uds_feed_can_frame|uds_example_start"
+          /opt/arm-gnu-toolchain-15.2.rel1-x86_64-arm-none-eabi/bin/arm-none-eabi-nm rtthread.elf > /tmp/rtthread.nm
+          for symbol in \
+            rtt_uds_create \
+            rtt_uds_feed_can_frame \
+            uds_example_start \
+            param_rdbi_node_register \
+            param_wdbi_node_register \
+            par_get_num_by_id \
+            par_get_scalar_by_id \
+            par_set_scalar_by_id
+          do
+            grep -Eq "[[:space:]]${symbol}$" /tmp/rtthread.nm || {
+              echo "Missing expected symbol: ${symbol}" >&2
+              exit 1
+            }
+          done

@@ -3,34 +3,27 @@
  * @brief UDS service implementation for Parameter Management (0x22/0x2E).
  * @details - 0x22 Read Data By Identifier (RDBI)
  *          - 0x2E Write Data By Identifier (WDBI)
- * 
+ *
  * @author wdfk-prog ()
- * @version 1.0
- * @date 2025-11-29
- * 
- * @copyright Copyright (c) 2025  
- * 
+ * @version 1.1
+ * @date 2026-06-16
+ *
+ * @copyright Copyright (c) 2025
+ *
  * @note    IMPORTANT:
- *          This file is an EXAMPLE integration. It depends on external modules:
- *          - parameter_manager.h (parameter_get, parameter_set)
- *          - general.h / general_extend.h (parameter objects)
- *          These functions are NOT implemented in the UDS library. 
- *          You must provide the backend implementation or adapt this file to 
- *          your specific non-volatile memory (NVM) manager.
+ *          This file is an EXAMPLE integration with autogen_parameter_manager.
+ *          UDS DID values are mapped directly to the generated external
+ *          parameter IDs. This example supports scalar parameters only and
+ *          transfers values as raw native memory without byte-order conversion.
  * @par Change Log:
  * Date       Version Author      Description
  * 2025-11-29 1.0     wdfk-prog   first version
+ * 2026-06-16 1.1     wdfk-prog   use autogen_parameter_manager backend
  */
 #include "rtt_uds_service.h"
 
-/* 
- * External Dependencies 
- * (Ensure these headers exist in your project or replace with your own NVM API)
- */
-#include "parameter_manager.h"
-#include "general.h"
-#include "general_extend.h"
-#include "common_macro.h"
+#include "par.h"
+#include <string.h>
 
 #define DBG_TAG "uds.param"
 #define DBG_LVL DBG_INFO
@@ -42,106 +35,244 @@
  * Configuration
  * ========================================================================== */
 
-/** 
- * @brief Max buffer size for reading a single parameter.
- * @details Ensure this is large enough to hold the largest parameter structure 
- *          defined in your system.
+/**
+ * @brief Max buffer size for reading a single scalar parameter.
+ * @details The scalar-only example currently needs at most 4 bytes. The macro
+ *          is kept configurable so the example can be extended without changing
+ *          the service code.
  */
 #ifndef UDS_PARAM_RDBI_BUF_SIZE
-#define UDS_PARAM_RDBI_BUF_SIZE 64
-#endif
+#define UDS_PARAM_RDBI_BUF_SIZE 8
+#endif /* !defined(UDS_PARAM_RDBI_BUF_SIZE) */
 
 #define PARAM_RDBI_BUF_SIZE UDS_PARAM_RDBI_BUF_SIZE
 
 /* ==========================================================================
- * Internal Helper Functions (Backend Wrappers)
+ * Internal Helper Functions (autogen_parameter_manager Backend Wrappers)
  * ========================================================================== */
 
 /**
- * @brief  Wrapper to read a parameter from the legacy manager.
- * @param  obj        Pointer to the parameter object (e.g., general_obj).
- * @param  index      The parameter index (Mapped from UDS DID).
- * @param  data       Buffer to store the read data.
- * @param  len_out    [Output] The length of the data actually read.
- * @param  readlevel  Security access level (legacy argument).
+ * @brief Convert a parameters status code to a UDS negative response code.
+ * @param status Operation status returned by the parameters module.
  * @return UDS_PositiveResponse or an appropriate NRC.
  */
-static UDSErr_t helper_param_read(struct paragen_object const * const obj,
-                                  U32 index,
-                                  void *data,
-                                  uint16_t *len_out,
-                                  U32 readlevel)
+static UDSErr_t helper_param_status_to_nrc(par_status_t status)
 {
-    U32 data_len = 0;
-    RC ret;
-
-    /* 
-     * Call external API: parameter_get
-     * Note: Ensure 'data' buffer is sufficient. Legacy API often lacks size arg.
-     */
-    ret = parameter_get(obj, index, data, &data_len, readlevel);
-
-    switch (ret)
+    if ((status & ePAR_STATUS_ERROR_MASK) == 0U)
     {
-    case RC_SUCCESS:
-        *len_out = (uint16_t)data_len;
+        return UDS_PositiveResponse;
+    }
+
+    if ((status & (ePAR_ERROR_PARAM | ePAR_ERROR_PAR_NUM | ePAR_ERROR_TYPE | ePAR_ERROR_VALUE)) != 0U)
+    {
+        return UDS_NRC_RequestOutOfRange;
+    }
+
+    if ((status & ePAR_ERROR_ACCESS) != 0U)
+    {
+        return UDS_NRC_SecurityAccessDenied;
+    }
+
+    if ((status & (ePAR_ERROR_INIT | ePAR_ERROR_NVM | ePAR_ERROR_MUTEX)) != 0U)
+    {
+        return UDS_NRC_ConditionsNotCorrect;
+    }
+
+    return UDS_NRC_GeneralReject;
+}
+
+/**
+ * @brief Return the native byte size for one supported scalar parameter type.
+ * @param type Parameter scalar type.
+ * @param len_out Pointer to the byte-length output.
+ * @return UDS_PositiveResponse when the type is supported; otherwise NRC.
+ */
+static UDSErr_t helper_param_scalar_size(par_type_list_t type, uint16_t *len_out)
+{
+    switch (type)
+    {
+    case ePAR_TYPE_U8:
+    case ePAR_TYPE_I8:
+        *len_out = 1U;
         return UDS_PositiveResponse;
 
-    case RC_ERROR_RANGE:
-        /* Index/DID not found in this object table */
-        return UDS_NRC_RequestOutOfRange;
+    case ePAR_TYPE_U16:
+    case ePAR_TYPE_I16:
+        *len_out = 2U;
+        return UDS_PositiveResponse;
 
-    case RC_ERROR_OPEN:
-    case RC_ERROR_READ_FAILS:
-    case RC_ERROR_INVALID:
-        /* Hardware or Logic error */
-        return UDS_NRC_ConditionsNotCorrect;
+    case ePAR_TYPE_U32:
+    case ePAR_TYPE_I32:
+    case ePAR_TYPE_F32:
+        *len_out = 4U;
+        return UDS_PositiveResponse;
 
     default:
-        return UDS_NRC_GeneralReject;
+        return UDS_NRC_RequestOutOfRange;
     }
 }
 
 /**
- * @brief  Wrapper to write a parameter to the legacy manager.
- * @param  obj              Pointer to the parameter object.
- * @param  index            The parameter index (Mapped from UDS DID).
- * @param  data             Pointer to the data to write.
- * @param  size             Size of the data.
- * @param  if_write_eeprom  TRUE to save to NVM, FALSE for RAM only.
+ * @brief Return a pointer to the native scalar union member for one type.
+ * @param value Pointer to the scalar value union.
+ * @param type Parameter scalar type.
+ * @return Pointer to the typed union member, or RT_NULL when unsupported.
+ */
+static void *helper_param_scalar_ptr(par_type_t *value, par_type_list_t type)
+{
+    switch (type)
+    {
+    case ePAR_TYPE_U8:
+        return &value->u8;
+
+    case ePAR_TYPE_I8:
+        return &value->i8;
+
+    case ePAR_TYPE_U16:
+        return &value->u16;
+
+    case ePAR_TYPE_I16:
+        return &value->i16;
+
+    case ePAR_TYPE_U32:
+        return &value->u32;
+
+    case ePAR_TYPE_I32:
+        return &value->i32;
+
+    case ePAR_TYPE_F32:
+        return &value->f32;
+
+    default:
+        return RT_NULL;
+    }
+}
+
+/**
+ * @brief Read one scalar parameter through autogen_parameter_manager.
+ * @param id External parameter ID mapped from the UDS DID.
+ * @param data Buffer to store the native scalar bytes.
+ * @param data_size Size of the output buffer in bytes.
+ * @param len_out Pointer to the actual scalar byte length.
  * @return UDS_PositiveResponse or an appropriate NRC.
  */
-static UDSErr_t helper_param_write(struct paragen_object const * const obj,
-                                   U32 index,
-                                   void *data,
-                                   uint16_t size,
-                                   BO if_write_eeprom)
+static UDSErr_t helper_param_read(uint16_t id, uint8_t *data, uint16_t data_size, uint16_t *len_out)
 {
-    RC ret;
+    par_num_t par_num;
+    par_type_t value;
+    par_type_list_t type;
+    par_status_t status;
+    uint16_t len;
+    void *value_ptr;
+    UDSErr_t nrc;
 
-    /* Call external API: parameter_set */
-    ret = parameter_set(obj, index, data, (U32)size, if_write_eeprom);
-
-    switch (ret)
+    if (!par_is_init())
     {
-    case RC_SUCCESS:
-        return UDS_PositiveResponse;
-
-    case RC_ERROR_RANGE:
-        return UDS_NRC_RequestOutOfRange;
-
-    case RC_ERROR_FILE_ACCESS:
-        return UDS_NRC_SecurityAccessDenied;
-
-    case RC_ERROR_OPEN:
-    case RC_ERROR_READ_FAILS:
-    case RC_ERROR_INVALID:
         return UDS_NRC_ConditionsNotCorrect;
-
-    case RC_ERROR:
-    default:
-        return UDS_NRC_GeneralReject;
     }
+
+    status = par_get_num_by_id(id, &par_num);
+    nrc = helper_param_status_to_nrc(status);
+    if (nrc != UDS_PositiveResponse)
+    {
+        return nrc;
+    }
+
+    type = par_get_type(par_num);
+    nrc = helper_param_scalar_size(type, &len);
+    if (nrc != UDS_PositiveResponse)
+    {
+        return nrc;
+    }
+
+    if (len > data_size)
+    {
+        return UDS_NRC_ResponseTooLong;
+    }
+
+    value_ptr = helper_param_scalar_ptr(&value, type);
+    if (value_ptr == RT_NULL)
+    {
+        return UDS_NRC_RequestOutOfRange;
+    }
+
+    status = par_get_scalar_by_id(id, value_ptr);
+    nrc = helper_param_status_to_nrc(status);
+    if (nrc != UDS_PositiveResponse)
+    {
+        return nrc;
+    }
+
+    memcpy(data, value_ptr, len);
+    *len_out = len;
+    return UDS_PositiveResponse;
+}
+
+/**
+ * @brief Write one scalar parameter through autogen_parameter_manager.
+ * @param id External parameter ID mapped from the UDS DID.
+ * @param data Pointer to native scalar bytes.
+ * @param size Scalar byte length.
+ * @return UDS_PositiveResponse or an appropriate NRC.
+ */
+static UDSErr_t helper_param_write(uint16_t id, const uint8_t *data, uint16_t size)
+{
+    par_num_t par_num;
+    par_type_t value;
+    par_type_list_t type;
+    par_status_t status;
+    uint16_t len;
+    void *value_ptr;
+    UDSErr_t nrc;
+
+    if (!par_is_init())
+    {
+        return UDS_NRC_ConditionsNotCorrect;
+    }
+
+    status = par_get_num_by_id(id, &par_num);
+    nrc = helper_param_status_to_nrc(status);
+    if (nrc != UDS_PositiveResponse)
+    {
+        return nrc;
+    }
+
+    type = par_get_type(par_num);
+    nrc = helper_param_scalar_size(type, &len);
+    if (nrc != UDS_PositiveResponse)
+    {
+        return nrc;
+    }
+
+    if (size != len)
+    {
+        return UDS_NRC_IncorrectMessageLengthOrInvalidFormat;
+    }
+
+    value_ptr = helper_param_scalar_ptr(&value, type);
+    if (value_ptr == RT_NULL)
+    {
+        return UDS_NRC_RequestOutOfRange;
+    }
+
+    memcpy(value_ptr, data, len);
+    status = par_set_scalar_by_id(id, value_ptr);
+    nrc = helper_param_status_to_nrc(status);
+    if (nrc != UDS_PositiveResponse)
+    {
+        return nrc;
+    }
+
+#if defined(UDS_PARAM_SAVE_AFTER_WDBI) && (1 == PAR_CFG_NVM_EN)
+    status = par_save_by_id(id);
+    nrc = helper_param_status_to_nrc(status);
+    if (nrc != UDS_PositiveResponse)
+    {
+        return nrc;
+    }
+#endif /* defined(UDS_PARAM_SAVE_AFTER_WDBI) && (1 == PAR_CFG_NVM_EN) */
+
+    return UDS_PositiveResponse;
 }
 
 /* ==========================================================================
@@ -149,14 +280,13 @@ static UDSErr_t helper_param_write(struct paragen_object const * const obj,
  * ========================================================================== */
 
 /**
- * @brief  Handler for Service 0x22 (ReadDataByIdentifier).
- * @details Implements a lookup strategy:
- *          1. Try 'general_extend_obj' (Common/Global IDs).
- *          2. If not found, try 'general_obj' (Local/Legacy IDs).
- * 
- * @param  srv     UDS Server instance.
- * @param  data    Pointer to UDSRDBIArgs_t.
- * @param  context Unused.
+ * @brief Handler for Service 0x22 (ReadDataByIdentifier).
+ * @details Reads one scalar parameter whose external parameter ID equals the
+ *          requested UDS DID. Values are copied as native memory without
+ *          byte-order conversion.
+ * @param srv UDS Server instance.
+ * @param data Pointer to UDSRDBIArgs_t.
+ * @param context Unused.
  * @return UDS_PositiveResponse or NRC.
  */
 static UDS_HANDLER(handle_rdbi)
@@ -164,79 +294,41 @@ static UDS_HANDLER(handle_rdbi)
     UDSRDBIArgs_t *args = (UDSRDBIArgs_t *)data;
     UDSErr_t result;
     uint16_t read_len = 0;
-
-    /* Temporary buffer for parameter value (Stack allocated) */
     uint8_t temp_buf[PARAM_RDBI_BUF_SIZE];
 
-    /* 1. Attempt read from Extended Object (Common IDs) */
-    result = helper_param_read(&general_extend_obj,
-                               (U32)args->dataId,
-                               temp_buf,
-                               &read_len,
-                               0); /* ReadLevel 0 */
-
-    /* 2. If failed (Not Found), attempt read from General Object (Local IDs) */
-    if (result == UDS_NRC_RequestOutOfRange)
-    {
-        /* Reset length before second attempt */
-        read_len = 0;
-        result = helper_param_read(&general_obj,
-                                   (U32)args->dataId,
-                                   temp_buf,
-                                   &read_len,
-                                   0);
-    }
-
+    result = helper_param_read(args->dataId, temp_buf, (uint16_t)sizeof(temp_buf), &read_len);
     if (result == UDS_PositiveResponse)
     {
-        /* Check if data fits in the UDS response PDU is handled by args->copy internally */
         return args->copy(srv, temp_buf, read_len);
     }
 
-    /* Return the failure code (likely RequestOutOfRange if neither had it) */
     return result;
 }
 
 /**
- * @brief  Handler for Service 0x2E (WriteDataByIdentifier).
- * @details Uses the same lookup strategy as RDBI. 
- *          Writes are persisted to EEPROM (TRUE flag).
- * 
- * @param  srv     UDS Server instance.
- * @param  data    Pointer to UDSWDBIArgs_t.
- * @param  context Unused.
+ * @brief Handler for Service 0x2E (WriteDataByIdentifier).
+ * @details Writes one scalar parameter whose external parameter ID equals the
+ *          requested UDS DID. Values are interpreted as native memory without
+ *          byte-order conversion. When UDS_PARAM_SAVE_AFTER_WDBI is enabled and
+ *          parameters NVM support is compiled in, the updated parameter is saved
+ *          with par_save_by_id().
+ * @param srv UDS Server instance.
+ * @param data Pointer to UDSWDBIArgs_t.
+ * @param context Unused.
  * @return UDS_PositiveResponse or NRC.
  */
 static UDS_HANDLER(handle_wdbi)
 {
     UDSWDBIArgs_t *args = (UDSWDBIArgs_t *)data;
-    UDSErr_t result;
 
-    /* 1. Attempt write to Extended Object */
-    result = helper_param_write(&general_extend_obj,
-                                (U32)args->dataId,
-                                (void *)args->data,
-                                args->len,
-                                TRUE); /* Persist to NVM */
-
-    /* 2. If failed (Not Found), attempt write to General Object */
-    if (result == UDS_NRC_RequestOutOfRange)
-    {
-        result = helper_param_write(&general_obj,
-                                    (U32)args->dataId,
-                                    (void *)args->data,
-                                    args->len,
-                                    TRUE);
-    }
-
-    return result;
+    return helper_param_write(args->dataId, args->data, args->len);
 }
 
 /* ==========================================================================
  * Service Registration
  * ========================================================================== */
 
-/* 
+/*
  * Defines the registration functions:
  * - param_rdbi_node_register / unregister
  * - param_wdbi_node_register / unregister
