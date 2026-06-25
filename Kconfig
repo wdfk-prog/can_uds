@@ -3,6 +3,8 @@
 menuconfig PKG_USING_CAN_UDS
     bool "Enable iso14229 (UDS) library"
     default n
+    select RT_USING_HEAP
+    select RT_USING_CAN
     help
         ISO14229-1 (UDS) library for RT-Thread.
         This library provides a platform-agnostic UDS client and server implementation
