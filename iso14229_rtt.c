@@ -87,7 +87,7 @@ void rtt_uds_log_hex(const char *title, const uint8_t *data, rt_size_t size)
 /**
  * @brief  Debug output callback required by the ISO-TP library.
  * @details Adapts the library's printf-style logging to RT-Thread's ULOG or kprintf.
- * 
+ *
  * @param  format Printf-style format string.
  * @param  ...    Variable arguments.
  */
@@ -100,11 +100,13 @@ void isotp_user_debug(const char *format, ...)
     /* Forward to ULOG if available */
     ulog_voutput(DBG_LVL, DBG_TAG, RT_TRUE, RT_NULL, 0, 0, 0, format, args);
 #else
-    /* Fallback to standard kernel printf */
-    rt_kprintf("[%s] ", DBG_TAG);
-    rt_vprintf(format, args);
-    rt_kprintf("\n");
-#endif
+#define UDS_RTTHREAD_LOG_BUFFER_SIZE          128  /**< Local fallback buffer size for CANUDS debug output. */
+    char log_buf[UDS_RTTHREAD_LOG_BUFFER_SIZE];
+
+    rt_vsnprintf(log_buf, sizeof(log_buf), format, args);
+    rt_kprintf("[%s] %s\n", DBG_TAG, log_buf);
+#undef UDS_RTTHREAD_LOG_BUFFER_SIZE
+#endif /* defined(RT_USING_ULOG) && defined(ULOG_BACKEND_USING_CONSOLE) */
 
     va_end(args);
 }
